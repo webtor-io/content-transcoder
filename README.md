@@ -36,7 +36,6 @@ GLOBAL OPTIONS:
    --transcode-grace value, --tg value       transcode grace in seconds (default: 5) [$TRANSCODE_GRACE]
    --probe-timeout value, --pt value         probe timeout in seconds (default: 600) [$PROBE_TIMEOUT]
    --job-id value                            job id [$JOB_ID]
-   --job-type value                          job type [$JOB_TYPE]
    --info-hash value                         info hash [$INFO_HASH]
    --file-path value                         file path [$FILE_PATH]
    --extra value                             extra [$EXTRA]
@@ -44,3 +43,12 @@ GLOBAL OPTIONS:
    --help, -h                                show help
    --version, -v                             print the version
 ```
+
+## Example
+```
+cd server &&
+rm -rf out/* && rm -rf tmp/* &&
+go build . &&
+./server --input='https://github.com/Matroska-Org/matroska-test-files/raw/master/test_files/test5.mkv' --player=true
+```
+Then you can open your browser http://localhost:8080/player/ and watch movie

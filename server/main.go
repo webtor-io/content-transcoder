@@ -345,12 +345,6 @@ func main() {
 			EnvVar: "JOB_ID",
 		},
 		cli.StringFlag{
-			Name:   "job-type",
-			Usage:  "job type",
-			Value:  "",
-			EnvVar: "JOB_TYPE",
-		},
-		cli.StringFlag{
 			Name:   "info-hash",
 			Usage:  "info hash",
 			Value:  "",
