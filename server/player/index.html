@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mediaelement/4.2.10/mediaelementplayer.min.css" integrity="sha256-ji1bfJaTGnyscoc7LzcV9yNJy5vGKJ0frO3KJo1oaGQ=" crossorigin="anonymous" />
+
+    <style>
+      .transcode-progress {
+        padding-top: 10px;
+        margin-left: -1px;
+      }
+      .transcode-fragments {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+      }
+      .transcode-fragment {
+        width: 10px;
+        height: 10px;
+        flex: 0 0 auto;
+        border: 1px white solid;
+      }
+      .transcode-fragment.transcode-fragment-done{
+        background-color: green;
+      }
+      .transcode-fragment.transcode-fragment-new{
+        background-color: grey;
+      }
+      .transcode-fragment-result {
+        flex: none;
+      }
+    </style>
+
+    <title>HLS Player</title>
+  </head>
+  <body>
+    <div class="container">
+        <h1>HLS Player</h1>
+        <video autoplay id="player" preload="auto">
+          <source src="/index.m3u8" />
+          <track src="/index_vtt.m3u8" srclang="en" />
+        </video>
+        <!-- <audio autoplay id="player" preload="auto">
+          <source src="/index.m3u8" />
+        </audio> -->
+        <div class="transcode-progress">
+            <div class="transcode-fragment-result">Preparing transcoding...</div>
+        </div>
+    </div>
+
+    <!-- Optional JavaScript -->
+    <!-- jQuery first, then Popper.js, then Bootstrap JS -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mediaelement/4.2.10/mediaelement-and-player.min.js" integrity="sha256-bGz/0MMW4d9dsyq3BEXee8f377noiWxTibmRZqWvvYI=" crossorigin="anonymous"></script>
+    <script>
+        new MediaElementPlayer('player', {
+            features: ['playpause', 'current', 'progress', 'duration', 'tracks',
+                'volume', 'fullscreen'],
+            success: function (mediaElement, originalNode) {
+                // do things
+
+            },
+            hls: {
+                startPosition: 0,
+                autoStartLoad: true,
+                manifestLoadingTimeOut: 1000 * 60 * 10,
+                manifestLoadingMaxRetry: 100,
+                manifestLoadingMaxRetryTimeout: 1000 * 10,
+                fragLoadingTimeOut: 1000 * 60 * 10,
+                fragLoadingMaxRetry: 100,
+                fragLoadingMaxRetryTimeout: 1000 * 10,
+            },
+            stretching: 'responsive',
+        });
+        var f = null;
+        function render(playlist) {
+          var progress = $('.transcode-progress');
+          progress.empty();
+          var c = 0;
+          var fragments = $('<div class="transcode-fragments" />');
+          progress.append(fragments);
+          $.each(playlist.fragments, function(i, fr) {
+            var fragment = $('<div />');
+            if (fr.state == 'Done') {
+              fragment.addClass('transcode-fragment-done');
+            } else {
+              c++;
+              fragment.addClass('transcode-fragment-new');
+            }
+            fragment.addClass('transcode-fragment');
+            fragments.append(fragment);
+          });
+          if (playlist.ended === true && c === 0) {
+            progress.append('<div class="transcode-fragment-result">Done!</div>');
+            clearInterval(t);
+          } else {
+            progress.append('<div class="transcode-fragment-result">In progress...</div>');
+          }
+        }
+        function fetchAndRender() {
+          fetch('/index.m3u8.json')
+          .then(function(response) {
+            return response.json();
+          })
+          .then(function(playlist) {
+            render(playlist);
+          });
+        }
+        var t = setInterval(fetchAndRender, 1000);
+        fetchAndRender();
+
+    </script>
+  </body>
+</html>

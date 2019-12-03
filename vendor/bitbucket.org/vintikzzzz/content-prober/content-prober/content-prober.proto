@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+service ContentProber {
+  // Gets information about media content
+  rpc Probe(ProbeRequest) returns (ProbeReply) {}
+}
+
+// Media stream
+message Stream {
+  int32  index          = 1;
+  string codec_name     = 2;
+  string codec_type     = 3;
+  int32  width          = 4;
+  int32  height         = 5;
+  string bit_rate       = 6;
+  string duration       = 7;
+  int32  channels       = 8;
+  string channel_layout = 9;
+  string sample_rate    = 10;
+
+  map<string, string> tags = 11;
+}
+
+// Media format
+message Format {
+  string format_name = 1;
+  string bit_rate    = 2;
+  string duration    = 3;
+
+  map<string, string> tags = 4;
+}
+
+// The probe request message
+message ProbeRequest {
+  string url = 1;
+}
+
+// The probe response message
+message ProbeReply {
+  Format format = 1;
+  repeated Stream streams = 2;
+}
