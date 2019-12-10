@@ -38,9 +38,9 @@ func allowCORSHandler(h http.Handler, acao string) http.Handler {
 }
 
 func waitHandler(h http.Handler, ctx context.Context, path string, pattern string, lch chan string) (http.Handler, error) {
-	requests := make(map[string]([]chan error))
+	var locks sync.Map
 	re, err := regexp.Compile(pattern)
-	var mux sync.Mutex
+	// var mux sync.Mutex
 	if err != nil {
 		return nil, errors.Wrap(err, "Failed to compile regex for wait handler")
 	}
@@ -59,14 +59,14 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 				name := filepath.Base(event.Name)
 				if re.MatchString(name) && event.Op == fsnotify.Create {
 					log.WithField("name", name).Info("Got watcher event")
-					mux.Lock()
-					h, ok := requests[name]
+					w, ok := locks.Load(name)
 					if ok {
-						for _, r := range h {
-							r <- nil
-						}
+						log.WithField("name", name).Info("Release lock")
+						go func() {
+							time.Sleep(500 * time.Millisecond)
+							close(w.(chan error))
+						}()
 					}
-					mux.Unlock()
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -87,25 +87,27 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 		if re.MatchString(r.URL.Path) {
 			name := filepath.Base(r.URL.Path)
 			if _, err := os.Stat(path + r.URL.Path); os.IsNotExist(err) {
-				// log.WithField("name", name).Info("Add request")
-				ch := make(chan error)
-				mux.Lock()
-				requests[name] = append(requests[name], ch)
-				mux.Unlock()
-				ticker := time.NewTicker(time.Second)
-				go func() {
-					for range ticker.C {
-						lch <- name
-					}
-				}()
+				log.WithField("name", name).Info("Add request lock")
+				w, loaded := locks.LoadOrStore(name, make(chan error))
+				var ticker *time.Ticker
+				if !loaded {
+					ticker := time.NewTicker(time.Second)
+					go func() {
+						for range ticker.C {
+							lch <- name
+						}
+					}()
+				}
 				select {
 				case <-time.After(10 * time.Minute):
-				case <-ch:
+				case <-w.(chan error):
 				case <-r.Context().Done():
 				case <-ctx.Done():
 					break
 				}
-				ticker.Stop()
+				if ticker != nil {
+					ticker.Stop()
+				}
 			}
 			go func() {
 				lch <- name

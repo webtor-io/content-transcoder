@@ -13,6 +13,10 @@ type Options struct {
 	duration       int
 	forceTranscode bool
 	preset         string
+	videoCodec     string
+	audioCodec     string
+	subtitleCodec  string
+	dropHEVC       bool
 }
 
 func OptionsFromString(in string) *Options {
@@ -35,5 +39,9 @@ func OptionsFromString(in string) *Options {
 	}
 	o.duration = 10
 	o.forceTranscode = false
+	o.dropHEVC = true
+	o.videoCodec = "h264"
+	o.audioCodec = "aac"
+	o.subtitleCodec = "webvtt"
 	return o
 }

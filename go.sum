@@ -8,6 +8,7 @@ bitbucket.org/vintikzzzz/content-prober v0.0.0-20190608210300-4bf4aa8d060e h1:nE
 bitbucket.org/vintikzzzz/content-prober v0.0.0-20190608210300-4bf4aa8d060e/go.mod h1:aDXhZ8wO2cDZEZ7h7EuJqn6H/+qIbeUsw2GQvxHV6Qs=
 bitbucket.org/vintikzzzz/content-prober v0.0.0-20190617224145-317bfed7eba9 h1:8DL59Vwuq0sGdatsBeeR6CTAloSuweYpi27ChVEFvB4=
 bitbucket.org/vintikzzzz/content-prober v0.0.0-20190617224145-317bfed7eba9/go.mod h1:aDXhZ8wO2cDZEZ7h7EuJqn6H/+qIbeUsw2GQvxHV6Qs=
+bitbucket.org/vintikzzzz/content-prober v0.0.0-20190703200857-ab31afab5d76 h1:mYfjK+w9euUWaRvWSnLC8ZSBPYixEcJTJb38LNH0uyY=
 bitbucket.org/vintikzzzz/gracenet v0.0.0-20181023183424-6a5fb25ba0c3 h1:O5VrymC8TXkz3kaF1FQ124PGp7rzkiB2FAvwnqTp1fw=
 bitbucket.org/vintikzzzz/gracenet v0.0.0-20181023183424-6a5fb25ba0c3/go.mod h1:bipYws9KAOIb1tm1ncjVw+2WNt4mOgYPgIDngU9YK8k=
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=

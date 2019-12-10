@@ -16,19 +16,21 @@ import (
 )
 
 type HLSTranscoder struct {
-	probe        *cp.ProbeReply
-	in           string
-	out          string
-	options      *Options
-	cmd          *exec.Cmd
-	state        TranscodeState
-	mux          sync.Mutex
-	gt           *time.Timer
-	name         string
-	start        int
-	videoStrm    *cp.Stream
-	audioStrm    *cp.Stream
-	subtitleStrm *cp.Stream
+	probe              *cp.ProbeReply
+	in                 string
+	out                string
+	options            *Options
+	cmd                *exec.Cmd
+	state              TranscodeState
+	mux                sync.Mutex
+	gt                 *time.Timer
+	name               string
+	start              int
+	videoStrm          *cp.Stream
+	audioStrm          *cp.Stream
+	subtitleStrm       *cp.Stream
+	fragmentsProcessed int
+	shouldSuspend      bool
 }
 
 type TranscodeState string
@@ -44,13 +46,15 @@ const (
 
 func NewHLSTranscoder(probe *cp.ProbeReply, in string, out string, opts *Options, start int) *HLSTranscoder {
 	return &HLSTranscoder{
-		probe:   probe,
-		in:      in,
-		out:     out,
-		options: opts,
-		state:   NotStarted,
-		name:    "index",
-		start:   start,
+		probe:              probe,
+		in:                 in,
+		out:                out,
+		options:            opts,
+		state:              NotStarted,
+		name:               "index",
+		start:              start,
+		fragmentsProcessed: 0,
+		shouldSuspend:      false,
 	}
 }
 
@@ -83,6 +87,7 @@ func (h *HLSTranscoder) IsAlive() bool {
 }
 func (h *HLSTranscoder) Ping() {
 	if h.state == Running {
+		h.shouldSuspend = false
 		h.gt.Reset(h.options.grace)
 	}
 	if h.state == Suspended {
@@ -107,7 +112,7 @@ func (h *HLSTranscoder) watchUpdates(ctx context.Context) (chan error, chan *HLS
 	}
 	go func() {
 		defer watcher.Close()
-		defer close(ch)
+		// defer close(ch)
 		var pl *HLSPlaylist
 		var vttPl *HLSPlaylist
 		for {
@@ -204,24 +209,39 @@ func (h *HLSTranscoder) Run(ctx context.Context) (chan error, chan *HLSPlaylist,
 			case <-ctx.Done():
 				return
 			case <-h.gt.C:
-				h.Suspend()
+				h.shouldSuspend = true
 			}
 		}
 	}()
+	resPlCh := make(chan *HLSPlaylist)
 	plDone, plCh, err := h.watchUpdates(ctx)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "Failed to watch updates")
 	}
 	res := make(chan error)
 	go func() {
-		defer h.gt.Stop()
 		for {
 			select {
+			case pl := <-plCh:
+				resPlCh <- pl
+				if h.fragmentsProcessed < len(pl.Fragments) {
+					h.fragmentsProcessed = len(pl.Fragments)
+					if h.shouldSuspend {
+						h.Suspend()
+					}
+				}
 			case err := <-plDone:
 				if err != nil {
 					res <- errors.Wrap(err, "Watch updates done")
 					return
 				}
+			}
+		}
+	}()
+	go func() {
+		defer h.gt.Stop()
+		for {
+			select {
 			case <-ctx.Done():
 				h.Kill()
 				res <- errors.Wrap(ctx.Err(), "Context done")
@@ -239,7 +259,7 @@ func (h *HLSTranscoder) Run(ctx context.Context) (chan error, chan *HLSPlaylist,
 		}
 	}()
 	h.state = Running
-	return res, plCh, nil
+	return res, resPlCh, nil
 }
 
 func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply, start int) ([]string, *cp.Stream, *cp.Stream, *cp.Stream) {
@@ -275,10 +295,6 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 	var videoStrm *cp.Stream
 	var subtitleStrm *cp.Stream
 
-	videoCodec := "h264"
-	audioCodec := "aac"
-	subtitleCodec := "webvtt"
-
 	for _, strm := range pr.GetStreams() {
 		if strm.GetCodecType() == "video" && strm.GetCodecName() != "mjpeg" && strm.GetCodecName() != "png" && videoStrm == nil {
 			videoStrm = strm
@@ -309,10 +325,10 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 	}
 	if videoStrm != nil {
 		params = append(params, "-vcodec")
-		if options.forceTranscode || videoStrm.GetCodecName() != videoCodec {
-			params = append(params, videoCodec)
-			params = append(params, "-x264-params", "keyint=240:scenecut=0")
-			params = append(params, "-r", "24")
+		if options.forceTranscode || videoStrm.GetCodecName() != options.videoCodec {
+			params = append(params, options.videoCodec)
+			// params = append(params, "-x264-params", "keyint=240:scenecut=0")
+			// params = append(params, "-r", "24")
 		} else {
 			params = append(params, "copy")
 		}
@@ -321,8 +337,8 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 	}
 	if audioStrm != nil {
 		params = append(params, "-acodec")
-		if options.forceTranscode || audioStrm.GetCodecName() != audioCodec {
-			params = append(params, audioCodec)
+		if options.forceTranscode || audioStrm.GetCodecName() != options.audioCodec {
+			params = append(params, options.audioCodec)
 			params = append(params, "-ac")
 			params = append(params, "2")
 		} else {
@@ -333,8 +349,8 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 	}
 	if subtitleStrm != nil {
 		params = append(params, "-scodec")
-		if options.forceTranscode || videoStrm.GetCodecName() != subtitleCodec {
-			params = append(params, subtitleCodec)
+		if options.forceTranscode || videoStrm.GetCodecName() != options.subtitleCodec {
+			params = append(params, options.subtitleCodec)
 		} else {
 			params = append(params, "copy")
 		}

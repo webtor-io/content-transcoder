@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"strconv"
 
 	cp "bitbucket.org/vintikzzzz/content-prober/content-prober"
 
@@ -60,10 +61,10 @@ func transcodeEvent(ctx context.Context, probe *cp.ProbeReply, in string, out st
 	return <-done
 }
 
-func startFragmentTranscoder(ctx context.Context, fr *HLSFragment, in string, mpl *HLSPlaylist, vttMpl *HLSPlaylist, probe *cp.ProbeReply, opts *Options) error {
-	workDir := fmt.Sprintf("tmp/%d", fr.Num)
-	h := NewHLSTranscoder(probe, in, workDir, opts, fr.Num)
-	fr.Transcoder = h
+func startFragmentTranscoder(ctx context.Context, num int, in string, mpl *HLSPlaylist, vttMpl *HLSPlaylist, probe *cp.ProbeReply, opts *Options) error {
+	workDir := fmt.Sprintf("tmp/%d", num)
+	h := NewHLSTranscoder(probe, in, workDir, opts, num)
+	// fr.Transcoder = h
 	done, plCh, err := h.Run(ctx)
 	if err != nil {
 		return errors.Wrap(err, "Failed to start transcoder")
@@ -75,17 +76,25 @@ func startFragmentTranscoder(ctx context.Context, fr *HLSFragment, in string, mp
 			}
 			fr := pl.Fragments[len(pl.Fragments)-1]
 			log.WithField("transcoder", pl.Start).Infof("%s with duration %f done", fr.Name, fr.Duration)
-			var err error
 			if pl.IsVTT {
 				vttMpl.ImportFragments(pl)
-
+				err := vttMpl.Write()
+				if err != nil {
+					done <- err
+					return
+				}
 			} else {
 				mpl.ImportFragments(pl)
+				err := mpl.Write()
+				if err != nil {
+					done <- err
+					return
+				}
 				err = flushPlaylist(mpl)
-			}
-			if err != nil {
-				done <- err
-				return
+				if err != nil {
+					done <- err
+					return
+				}
 			}
 			next := mpl.FindFragmentByNum(fr.Num + 1)
 			if !pl.IsVTT && next != nil && next.State == Done {
@@ -98,7 +107,7 @@ func startFragmentTranscoder(ctx context.Context, fr *HLSFragment, in string, mp
 	return <-done
 }
 
-func handleFragmentRequest(ctx context.Context, in string, name string, mpl *HLSPlaylist, vttMpl *HLSPlaylist, probe *cp.ProbeReply, opts *Options) error {
+func handleFragmentRequest(ctx context.Context, in string, name string, mpl *HLSPlaylist, vttMpl *HLSPlaylist, probe *cp.ProbeReply, pingingOnly bool, opts *Options) error {
 	for _, mfr := range mpl.Fragments {
 		if mfr.Name == name {
 			f := mfr
@@ -119,9 +128,9 @@ func handleFragmentRequest(ctx context.Context, in string, name string, mpl *HLS
 					break
 				}
 			}
-			if !found {
+			if !found && !pingingOnly {
 				log.Info("Transcoder not found near requested fragment, start new one")
-				err := startFragmentTranscoder(ctx, mfr, in, mpl, vttMpl, probe, opts)
+				err := startFragmentTranscoder(ctx, mfr.Num, in, mpl, vttMpl, probe, opts)
 				if err != nil {
 					return errors.Wrap(err, "Failed to start fragment transcoding")
 				}
@@ -135,27 +144,34 @@ func handleFragmentRequest(ctx context.Context, in string, name string, mpl *HLS
 }
 
 func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
+	d, err := strconv.ParseFloat(probe.GetFormat().GetDuration(), 64)
+	if err != nil {
+		return errors.Wrap(err, "Failed to parse format duration")
+	}
+	var videoStrm *cp.Stream
+	for _, strm := range probe.GetStreams() {
+		if strm.GetCodecType() == "video" {
+			videoStrm = strm
+		}
+	}
+	if videoStrm.GetCodecName() == "hevc" && opts.dropHEVC {
+		return errors.Errorf("HEVC not supported")
+	}
+	plDuration := d
 	res := make(chan error)
-	indexPath := fmt.Sprintf("%s/index.m3u8", out)
-	vttIndexPath := fmt.Sprintf("%s/index_vtt.m3u8", out)
-	opts.forceTranscode = true
-	mpl, err := NewHLSPlaylist(probe, opts.duration, "index", TS, out)
-	if err != nil {
-		return errors.Wrap(err, "Failed to build playlist")
-	}
-	vttMpl, err := NewHLSPlaylist(probe, opts.duration, "index", VTT, out)
-	if err != nil {
-		return errors.Wrap(err, "Failed to build vtt playlist")
-	}
-	err = mpl.Write(indexPath)
+	frDuration := opts.duration
+	name := "index"
+	plType := Event
+	mpl := NewHLSPlaylist(plType, plDuration, TS, frDuration, name, out)
+	vttMpl := NewHLSPlaylist(plType, plDuration, VTT, frDuration, name, out)
+	err = mpl.Write()
 	if err != nil {
 		return errors.Wrap(err, "Failed to write playlist")
 	}
-	err = vttMpl.Write(vttIndexPath)
+	err = vttMpl.Write()
 	if err != nil {
 		return errors.Wrap(err, "Failed to write vtt playlist")
 	}
-	// workIndexPath := fmt.Sprintf("%s/index.m3u8", workDir)
 	go func() {
 		for {
 			select {
@@ -163,7 +179,7 @@ func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out stri
 				return
 			case name := <-ch:
 				go func() {
-					err := handleFragmentRequest(ctx, in, name, mpl, vttMpl, probe, opts)
+					err := handleFragmentRequest(ctx, in, name, mpl, vttMpl, probe, true, opts)
 					if err != nil {
 						res <- err
 					}
@@ -171,6 +187,7 @@ func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out stri
 			}
 		}
 	}()
+	startFragmentTranscoder(ctx, 0, in, mpl, vttMpl, probe, opts)
 	return <-res
 }
 
