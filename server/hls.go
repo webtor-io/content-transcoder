@@ -31,6 +31,7 @@ type HLSTranscoder struct {
 	subtitleStrm       *cp.Stream
 	fragmentsProcessed int
 	shouldSuspend      bool
+	lazy               bool
 }
 
 type TranscodeState string
@@ -209,7 +210,9 @@ func (h *HLSTranscoder) Run(ctx context.Context) (chan error, chan *HLSPlaylist,
 			case <-ctx.Done():
 				return
 			case <-h.gt.C:
-				h.shouldSuspend = true
+				if h.options.lazyTranscoding {
+					h.shouldSuspend = true
+				}
 			}
 		}
 	}()

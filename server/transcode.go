@@ -30,36 +30,36 @@ func flushPlaylist(pl *HLSPlaylist) error {
 	return nil
 }
 
-func transcodeEvent(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
-	h := NewHLSTranscoder(probe, in, out, opts, 0)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ch:
-				h.Ping()
-			}
+// func transcodeEvent(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
+// 	h := NewHLSTranscoder(probe, in, out, opts, 0)
+// 	go func() {
+// 		for {
+// 			select {
+// 			case <-ctx.Done():
+// 				return
+// 			case <-ch:
+// 				h.Ping()
+// 			}
 
-		}
-	}()
-	done, plCh, err := h.Run(ctx)
-	if err != nil {
-		return err
-	}
-	go func() {
-		for pl := range plCh {
-			fr := pl.Fragments[len(pl.Fragments)-1]
-			log.Infof("%s with duration %f done", fr.Name, fr.Duration)
-			err := flushPlaylist(pl)
-			if err != nil {
-				done <- err
-				return
-			}
-		}
-	}()
-	return <-done
-}
+// 		}
+// 	}()
+// 	done, plCh, err := h.Run(ctx)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	go func() {
+// 		for pl := range plCh {
+// 			fr := pl.Fragments[len(pl.Fragments)-1]
+// 			log.Infof("%s with duration %f done", fr.Name, fr.Duration)
+// 			err := flushPlaylist(pl)
+// 			if err != nil {
+// 				done <- err
+// 				return
+// 			}
+// 		}
+// 	}()
+// 	return <-done
+// }
 
 func startFragmentTranscoder(ctx context.Context, num int, in string, mpl *HLSPlaylist, vttMpl *HLSPlaylist, probe *cp.ProbeReply, opts *Options) error {
 	workDir := fmt.Sprintf("tmp/%d", num)
@@ -107,47 +107,82 @@ func startFragmentTranscoder(ctx context.Context, num int, in string, mpl *HLSPl
 	return <-done
 }
 
-func handleFragmentRequest(ctx context.Context, in string, name string, mpl *HLSPlaylist, vttMpl *HLSPlaylist, probe *cp.ProbeReply, pingingOnly bool, opts *Options) error {
-	for _, mfr := range mpl.Fragments {
-		if mfr.Name == name {
-			f := mfr
-			found := false
-			if f.State == Done {
-				log.Info("Fragment is already transcoded")
-				found = true
-			}
-			for index := 0; index < 3; index++ {
-				if f.Transcoder != nil && f.Transcoder.IsAlive() {
-					log.Info("Pinging transcoder")
-					f.Transcoder.Ping()
-					found = true
-					break
-				} else if f.Prev != nil {
-					f = f.Prev
-				} else {
-					break
-				}
-			}
-			if !found && !pingingOnly {
-				log.Info("Transcoder not found near requested fragment, start new one")
-				err := startFragmentTranscoder(ctx, mfr.Num, in, mpl, vttMpl, probe, opts)
-				if err != nil {
-					return errors.Wrap(err, "Failed to start fragment transcoding")
-				}
-				if mpl.Done() {
-					log.Info("All transcoding fragments done")
-				}
-			}
-		}
-	}
-	return nil
-}
+// func handleFragmentRequest(ctx context.Context, in string, name string, mpl *HLSPlaylist, vttMpl *HLSPlaylist, probe *cp.ProbeReply, pingingOnly bool, opts *Options) error {
+// 	for _, mfr := range mpl.Fragments {
+// 		if mfr.Name == name {
+// 			f := mfr
+// 			found := false
+// 			if f.State == Done {
+// 				log.Info("Fragment is already transcoded")
+// 				found = true
+// 			}
+// 			for index := 0; index < 3; index++ {
+// 				if f.Transcoder != nil && f.Transcoder.IsAlive() {
+// 					log.Info("Pinging transcoder")
+// 					f.Transcoder.Ping()
+// 					found = true
+// 					break
+// 				} else if f.Prev != nil {
+// 					f = f.Prev
+// 				} else {
+// 					break
+// 				}
+// 			}
+// 			if !found && !pingingOnly {
+// 				log.Info("Transcoder not found near requested fragment, start new one")
+// 				err := startFragmentTranscoder(ctx, mfr.Num, in, mpl, vttMpl, probe, opts)
+// 				if err != nil {
+// 					return errors.Wrap(err, "Failed to start fragment transcoding")
+// 				}
+// 				if mpl.Done() {
+// 					log.Info("All transcoding fragments done")
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return nil
+// }
 
-func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
-	d, err := strconv.ParseFloat(probe.GetFormat().GetDuration(), 64)
-	if err != nil {
-		return errors.Wrap(err, "Failed to parse format duration")
-	}
+// func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
+// 	d, err := strconv.ParseFloat(probe.GetFormat().GetDuration(), 64)
+// 	if err != nil {
+// 		return errors.Wrap(err, "Failed to parse format duration")
+// 	}
+// 	plDuration := d
+// 	res := make(chan error)
+// 	frDuration := opts.duration
+// 	name := "index"
+// 	plType := VOD
+// 	mpl := NewHLSPlaylist(plType, plDuration, TS, frDuration, name, out)
+// 	vttMpl := NewHLSPlaylist(plType, plDuration, VTT, frDuration, name, out)
+// 	err = mpl.Write()
+// 	if err != nil {
+// 		return errors.Wrap(err, "Failed to write playlist")
+// 	}
+// 	err = vttMpl.Write()
+// 	if err != nil {
+// 		return errors.Wrap(err, "Failed to write vtt playlist")
+// 	}
+// 	go func() {
+// 		for {
+// 			select {
+// 			case <-ctx.Done():
+// 				return
+// 			case name := <-ch:
+// 				go func() {
+// 					err := handleFragmentRequest(ctx, in, name, mpl, vttMpl, probe, false, opts)
+// 					if err != nil {
+// 						res <- err
+// 					}
+// 				}()
+// 			}
+// 		}
+// 	}()
+// 	startFragmentTranscoder(ctx, 0, in, mpl, vttMpl, probe, opts)
+// 	return <-res
+// }
+
+func Transcode(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
 	var videoStrm *cp.Stream
 	for _, strm := range probe.GetStreams() {
 		if strm.GetCodecType() == "video" {
@@ -157,11 +192,15 @@ func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out stri
 	if videoStrm.GetCodecName() == "hevc" && opts.dropHEVC {
 		return errors.Errorf("HEVC not supported")
 	}
+	d, err := strconv.ParseFloat(probe.GetFormat().GetDuration(), 64)
+	if err != nil {
+		return errors.Wrap(err, "Failed to parse format duration")
+	}
 	plDuration := d
 	res := make(chan error)
 	frDuration := opts.duration
 	name := "index"
-	plType := Event
+	plType := VOD
 	mpl := NewHLSPlaylist(plType, plDuration, TS, frDuration, name, out)
 	vttMpl := NewHLSPlaylist(plType, plDuration, VTT, frDuration, name, out)
 	err = mpl.Write()
@@ -172,28 +211,7 @@ func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out stri
 	if err != nil {
 		return errors.Wrap(err, "Failed to write vtt playlist")
 	}
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case name := <-ch:
-				go func() {
-					err := handleFragmentRequest(ctx, in, name, mpl, vttMpl, probe, true, opts)
-					if err != nil {
-						res <- err
-					}
-				}()
-			}
-		}
-	}()
+
 	startFragmentTranscoder(ctx, 0, in, mpl, vttMpl, probe, opts)
 	return <-res
-}
-
-func Transcode(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
-	if probe.GetFormat().GetDuration() == "" {
-		return transcodeEvent(ctx, probe, in, out, opts, ch)
-	}
-	return transcodeVOD(ctx, probe, in, out, opts, ch)
 }

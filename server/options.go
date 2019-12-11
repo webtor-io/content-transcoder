@@ -7,16 +7,17 @@ import (
 )
 
 type Options struct {
-	audioChNum     int
-	subChNum       int
-	grace          time.Duration
-	duration       int
-	forceTranscode bool
-	preset         string
-	videoCodec     string
-	audioCodec     string
-	subtitleCodec  string
-	dropHEVC       bool
+	audioChNum      int
+	subChNum        int
+	grace           time.Duration
+	duration        int
+	forceTranscode  bool
+	preset          string
+	videoCodec      string
+	audioCodec      string
+	subtitleCodec   string
+	dropHEVC        bool
+	lazyTranscoding bool
 }
 
 func OptionsFromString(in string) *Options {
@@ -43,5 +44,6 @@ func OptionsFromString(in string) *Options {
 	o.videoCodec = "h264"
 	o.audioCodec = "aac"
 	o.subtitleCodec = "webvtt"
+	o.lazyTranscoding = false
 	return o
 }
