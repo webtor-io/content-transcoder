@@ -200,7 +200,7 @@ func Transcode(ctx context.Context, probe *cp.ProbeReply, in string, out string,
 	res := make(chan error)
 	frDuration := opts.duration
 	name := "index"
-	plType := VOD
+	plType := Event
 	mpl := NewHLSPlaylist(plType, plDuration, TS, frDuration, name, out)
 	vttMpl := NewHLSPlaylist(plType, plDuration, VTT, frDuration, name, out)
 	err = mpl.Write()
