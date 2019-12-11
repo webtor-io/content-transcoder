@@ -27,6 +27,27 @@ import (
 	"github.com/pkg/errors"
 )
 
+type AccessLock struct {
+	C      chan error
+	closed bool
+	mux    sync.Mutex
+}
+
+func NewAccessLock() *AccessLock {
+	return &AccessLock{C: make(chan error)}
+}
+func (al *AccessLock) Unlocked() chan error {
+	return al.C
+}
+func (al *AccessLock) Unlock() {
+	al.mux.Lock()
+	defer al.mux.Unlock()
+	if !al.closed {
+		close(al.C)
+		al.closed = true
+	}
+}
+
 func allowCORSHandler(h http.Handler, acao string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {
@@ -59,12 +80,12 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 				name := filepath.Base(event.Name)
 				if re.MatchString(name) && event.Op == fsnotify.Create {
 					log.WithField("name", name).Info("Got watcher event")
-					w, ok := locks.Load(name)
+					l, ok := locks.Load(name)
 					if ok {
 						log.WithField("name", name).Info("Release lock")
 						go func() {
 							time.Sleep(500 * time.Millisecond)
-							close(w.(chan error))
+							l.(*AccessLock).Unlock()
 						}()
 					}
 				}
@@ -88,7 +109,7 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 			name := filepath.Base(r.URL.Path)
 			if _, err := os.Stat(path + r.URL.Path); os.IsNotExist(err) {
 				log.WithField("name", name).Info("Add request lock")
-				w, loaded := locks.LoadOrStore(name, make(chan error))
+				al, loaded := locks.LoadOrStore(name, NewAccessLock())
 				var ticker *time.Ticker
 				if !loaded {
 					ticker := time.NewTicker(time.Second)
@@ -100,7 +121,7 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 				}
 				select {
 				case <-time.After(10 * time.Minute):
-				case <-w.(chan error):
+				case <-al.(*AccessLock).Unlocked():
 				case <-r.Context().Done():
 				case <-ctx.Done():
 					break

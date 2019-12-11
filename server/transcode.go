@@ -148,20 +148,11 @@ func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out stri
 	if err != nil {
 		return errors.Wrap(err, "Failed to parse format duration")
 	}
-	var videoStrm *cp.Stream
-	for _, strm := range probe.GetStreams() {
-		if strm.GetCodecType() == "video" {
-			videoStrm = strm
-		}
-	}
-	if videoStrm.GetCodecName() == "hevc" && opts.dropHEVC {
-		return errors.Errorf("HEVC not supported")
-	}
 	plDuration := d
 	res := make(chan error)
 	frDuration := opts.duration
 	name := "index"
-	plType := Event
+	plType := VOD
 	mpl := NewHLSPlaylist(plType, plDuration, TS, frDuration, name, out)
 	vttMpl := NewHLSPlaylist(plType, plDuration, VTT, frDuration, name, out)
 	err = mpl.Write()
@@ -179,7 +170,7 @@ func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out stri
 				return
 			case name := <-ch:
 				go func() {
-					err := handleFragmentRequest(ctx, in, name, mpl, vttMpl, probe, true, opts)
+					err := handleFragmentRequest(ctx, in, name, mpl, vttMpl, probe, false, opts)
 					if err != nil {
 						res <- err
 					}
@@ -192,8 +183,18 @@ func transcodeVOD(ctx context.Context, probe *cp.ProbeReply, in string, out stri
 }
 
 func Transcode(ctx context.Context, probe *cp.ProbeReply, in string, out string, opts *Options, ch chan string) error {
-	if probe.GetFormat().GetDuration() == "" {
-		return transcodeEvent(ctx, probe, in, out, opts, ch)
+	var videoStrm *cp.Stream
+	for _, strm := range probe.GetStreams() {
+		if strm.GetCodecType() == "video" {
+			videoStrm = strm
+		}
 	}
-	return transcodeVOD(ctx, probe, in, out, opts, ch)
+	if videoStrm.GetCodecName() == "hevc" && opts.dropHEVC {
+		return errors.Errorf("HEVC not supported")
+	}
+	return transcodeEvent(ctx, probe, in, out, opts, ch)
+	// if probe.GetFormat().GetDuration() == "" {
+	// 	return transcodeEvent(ctx, probe, in, out, opts, ch)
+	// }
+	// return transcodeVOD(ctx, probe, in, out, opts, ch)
 }
