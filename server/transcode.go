@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"strconv"
 
-	cp "bitbucket.org/vintikzzzz/content-prober/content-prober"
+	cp "github.com/webtor-io/content-prober/content-prober"
 
 	"encoding/json"
 

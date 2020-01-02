@@ -1,12 +1,8 @@
 module github.com/webtor-io/content-transcoder
 
 require (
-	bitbucket.org/vintikzzzz/content-error v0.0.0-20190707222156-350e886fe4b3 // indirect
-	bitbucket.org/vintikzzzz/content-prober v0.0.0-20190617224145-317bfed7eba9
-	bitbucket.org/vintikzzzz/gracenet v0.0.0-20181023183424-6a5fb25ba0c3
 	cloud.google.com/go v0.41.0 // indirect
 	github.com/fsnotify/fsnotify v1.4.7 // indirect
-	github.com/getsentry/raven-go v0.2.0
 	github.com/go-fsnotify/fsnotify v0.0.0-20180321022601-755488143dae // indirect
 	github.com/joonix/log v0.0.0-20190524090622-13fe31bbdd7a
 	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
@@ -15,6 +11,8 @@ require (
 	github.com/sirupsen/logrus v1.4.2
 	github.com/stretchr/objx v0.2.0 // indirect
 	github.com/urfave/cli v1.20.0
+	github.com/webtor-io/content-prober v0.0.0-20200102132143-472d3c9cba76
+	github.com/webtor-io/gracenet v0.0.0-20200102122601-7e0e6f3c06b5
 	golang.org/x/crypto v0.0.0-20190701094942-4def268fd1a4 // indirect
 	golang.org/x/exp v0.0.0-20190627132806-fd42eb6b336f // indirect
 	golang.org/x/image v0.0.0-20190703141733-d6a02ce849c9 // indirect

@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	cp "bitbucket.org/vintikzzzz/content-prober/content-prober"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	cp "github.com/webtor-io/content-prober/content-prober"
 	"gopkg.in/fsnotify.v1"
 )
 

@@ -13,17 +13,16 @@ import (
 	"syscall"
 	"time"
 
-	"bitbucket.org/vintikzzzz/gracenet"
 	joonix "github.com/joonix/log"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"github.com/webtor-io/gracenet"
 	"gopkg.in/fsnotify.v1"
 
 	u "net/url"
 
 	"path/filepath"
 
-	raven "github.com/getsentry/raven-go"
 	"github.com/pkg/errors"
 )
 
@@ -206,10 +205,11 @@ func run(c *cli.Context) error {
 
 	addr := fmt.Sprintf("%s:%d", c.String("host"), c.Int("port"))
 	ln, err := net.Listen("tcp", addr)
-	agln := gracenet.NewGraceListener(ln, time.Duration(c.Int("access-grace"))*time.Second)
 	if err != nil {
 		return errors.Wrap(err, "Failed to bind address")
 	}
+	defer ln.Close()
+	agln := gracenet.NewGraceListener(ln, time.Duration(c.Int("access-grace"))*time.Second)
 	paddr := fmt.Sprintf("%s:%d", c.String("host"), c.Int("probe-port"))
 	pln, err := net.Listen("tcp", paddr)
 	if err != nil {
@@ -393,7 +393,6 @@ func main() {
 	app.Action = run
 	err := app.Run(os.Args)
 	if err != nil {
-		raven.CaptureErrorAndWait(err, nil)
 		log.WithError(err).Fatal("Failed to serve application")
 	}
 }

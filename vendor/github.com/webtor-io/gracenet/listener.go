@@ -6,14 +6,14 @@ import (
 )
 
 type GraceListener struct {
-	ln    net.Listener
-	expCh chan bool
-	revCh chan bool
-	actCh chan bool
+	ln      net.Listener
+	expCh   chan bool
+	revCh   chan bool
+	actCh   chan bool
 	running bool
 	expired bool
-	gt *time.Timer
-	d time.Duration
+	gt      *time.Timer
+	d       time.Duration
 }
 
 func NewGraceListener(l net.Listener, d time.Duration) *GraceListener {
@@ -22,14 +22,14 @@ func NewGraceListener(l net.Listener, d time.Duration) *GraceListener {
 	expCh := make(chan bool)
 	revCh := make(chan bool)
 	ln := &GraceListener{
-		ln:    l,
-		expCh: expCh,
-		revCh: revCh,
-		actCh: actCh,
+		ln:      l,
+		expCh:   expCh,
+		revCh:   revCh,
+		actCh:   actCh,
 		running: true,
 		expired: false,
-		gt: gt,
-		d: d,
+		gt:      gt,
+		d:       d,
 	}
 	go func() {
 		for {
@@ -71,6 +71,9 @@ func (ln *GraceListener) Start() {
 
 func (ln *GraceListener) Accept() (net.Conn, error) {
 	c, err := ln.ln.Accept()
+	if err != nil {
+		return c, err
+	}
 	c = NewGraceConn(c, ln.actCh)
 	return c, err
 }
