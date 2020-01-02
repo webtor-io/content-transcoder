@@ -48,7 +48,7 @@ GLOBAL OPTIONS:
 ```
 cd server &&
 rm -rf out/* && rm -rf tmp/* &&
-go build . &&
+go build -mod=vendor . &&
 ./server --input='https://github.com/Matroska-Org/matroska-test-files/raw/master/test_files/test5.mkv' --player=true
 ```
 Then you can open your browser http://localhost:8080/player/ and watch movie
