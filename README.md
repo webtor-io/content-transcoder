@@ -1,4 +1,4 @@
-# torrent-web-seeder
+# content-transcoder
 
 Transcodes HTTP-stream to HLS with additional features:
 1. Web-access to transcoded content
