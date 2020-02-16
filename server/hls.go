@@ -291,6 +291,9 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 		"-hls_time", fmt.Sprintf("%d", options.duration),
 		"-start_number", fmt.Sprintf("%d", start),
 		"-err_detect", "ignore_err",
+		"-reconnect_at_eof", "1",
+		"-reconnect_streamed", "1",
+		"-seekable", "1",
 		// "-hls_flags", "round_durations",
 	)
 
