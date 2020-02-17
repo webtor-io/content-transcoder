@@ -2,13 +2,13 @@
 FROM jrottenberg/ffmpeg:4.0-alpine AS ffmpeg
 
 # golang image
-FROM golang:1.11.5-alpine3.8 AS build
+FROM golang:latest AS build
+
+# set work dir
+WORKDIR /app
 
 # copy the source files
-COPY . /go/src/github.com/webtor-io/content-transcoder
-
-# set workdir
-WORKDIR /go/src/github.com/webtor-io/content-transcoder/server
+COPY . .
 
 # enable modules
 ENV GO111MODULE=on
@@ -20,18 +20,18 @@ ENV CGO_ENABLED=0
 ENV GOOS=linux
 
 # build the binary with debug information removed
-RUN go build -mod=vendor -ldflags '-w -s' -a -installsuffix cgo -o server
+RUN cd ./server && go build -mod=vendor -ldflags '-w -s' -a -installsuffix cgo -o server
 
-FROM alpine:3.8
+FROM alpine:latest
 
 # copy static ffmpeg to use later 
 COPY --from=ffmpeg /usr/local /usr/local
 
 # install additional dependencies for ffmpeg
-RUN apk add --no-cache --update libgcc libstdc++ ca-certificates libcrypto1.0 libssl1.0 libgomp expat
+RUN apk add --no-cache --update libgcc libstdc++ ca-certificates libcrypto1.1 libssl1.1 libgomp expat
 
 # copy our static linked library
-COPY --from=build /go/src/github.com/webtor-io/content-transcoder/server/server .
+COPY --from=build /app/server/server .
 
 # make output dir
 RUN mkdir ./out
