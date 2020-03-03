@@ -119,9 +119,9 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 					}()
 				}
 				select {
-				case <-time.After(10 * time.Minute):
+				// case <-time.After(10 * time.Minute):
 				case <-al.(*AccessLock).Unlocked():
-				case <-r.Context().Done():
+				// case <-r.Context().Done():
 				case <-ctx.Done():
 					break
 				}
