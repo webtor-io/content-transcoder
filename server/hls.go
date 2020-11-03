@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -332,8 +331,9 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 	}
 	if videoStrm != nil {
 		params = append(params, "-vcodec")
-		bitrate, err := strconv.Atoi(pr.GetFormat().GetBitRate())
-		if options.forceTranscode || videoStrm.GetCodecName() != options.videoCodec || err == nil && bitrate > 2_000_000 {
+		// bitrate, err := strconv.Atoi(pr.GetFormat().GetBitRate())
+		if options.forceTranscode || videoStrm.GetCodecName() != options.videoCodec {
+			// if options.forceTranscode || videoStrm.GetCodecName() != options.videoCodec || err == nil && bitrate > 2_000_000 {
 			params = append(params, options.videoCodec)
 			// https://gist.github.com/kuntau/a7cbe28df82380fd3467#gistcomment-2388045
 			// params = append(params, "-crf", "27", "-x264-params", "cabac=1:ref=5:analyse=0x133:me=umh:subme=9:chroma-me=1:deadzone-inter=21:deadzone-intra=11:b-adapt=2:rc-lookahead=60:vbv-maxrate=10000:vbv-bufsize=10000:qpmax=69:bframes=5:b-adapt=2:direct=auto:crf-max=51:weightp=2:merange=24:chroma-qp-offset=-1:sync-lookahead=2:psy-rd=1.00,0.15:trellis=2:min-keyint=23:partitions=all")
@@ -354,8 +354,8 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 			params = append(params, options.audioCodec)
 			params = append(params, "-ac")
 			params = append(params, "2")
-			params = append(params, "-ar", "44100")
-			params = append(params, "-b:a", "128k")
+			// params = append(params, "-ar", "44100")
+			// params = append(params, "-b:a", "128k")
 		} else {
 			params = append(params, "copy")
 		}
