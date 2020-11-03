@@ -351,7 +351,7 @@ func genFFmpegParams(in string, out string, options *Options, pr *cp.ProbeReply,
 	if audioStrm != nil {
 		params = append(params, "-acodec")
 		if options.forceTranscode || audioStrm.GetCodecName() != options.audioCodec {
-			params = append(params, options.audioCodec)
+			params = append(params, "libfdk_aac")
 			params = append(params, "-ac")
 			params = append(params, "2")
 			// params = append(params, "-ar", "44100")
