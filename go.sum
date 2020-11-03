@@ -91,6 +91,7 @@ github.com/urfave/cli v1.20.0 h1:fDqGv3UG/4jbVl/QkFwEdddtEDjh/5Ov6X+0B/3bPaw=
 github.com/urfave/cli v1.20.0/go.mod h1:70zkFmudgCuE/ngEzBv17Jvp/497gISqfk5gWijbERA=
 github.com/webtor-io/content-prober v0.0.0-20200102132143-472d3c9cba76 h1:MoViH9xeEDXZ/yMW8VslaHqHw/TMgGL5ZQzPX67LUFc=
 github.com/webtor-io/content-prober v0.0.0-20200102132143-472d3c9cba76/go.mod h1:VqgcZdLHBsE8kLdm/TeDqDG6Ky6KU8LtOcdm72pZU68=
+github.com/webtor-io/content-prober v0.0.0-20200920103244-26ac4513b378 h1:VIZTnEpmM0cRWaBC8RkzBGBoIwF6gYAtUWhDS7MB0Sk=
 github.com/webtor-io/gracenet v0.0.0-20200102122601-7e0e6f3c06b5 h1:bBVgGd/bVcRsE3zFkccroA4FYgAhTd22Z0lM7V00kb8=
 github.com/webtor-io/gracenet v0.0.0-20200102122601-7e0e6f3c06b5/go.mod h1:W/I3wRZPVQg5ex7/PjlYIBTOaPDyZ77PdjX7SYT59N4=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=
