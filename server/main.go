@@ -105,6 +105,10 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if re.MatchString(r.URL.Path) {
+			if ctx.Err() != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			name := filepath.Base(r.URL.Path)
 			if _, err := os.Stat(path + r.URL.Path); os.IsNotExist(err) {
 				log.WithField("name", name).Info("Add request lock")
@@ -123,6 +127,10 @@ func waitHandler(h http.Handler, ctx context.Context, path string, pattern strin
 				case <-al.(*AccessLock).Unlocked():
 				// case <-r.Context().Done():
 				case <-ctx.Done():
+					if ctx.Err() != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
 					break
 				}
 				if ticker != nil {
@@ -242,6 +250,14 @@ func run(c *cli.Context) error {
 		httpError <- err
 	}()
 
+	go func() {
+		err := transcode(ctx, c, in, out, ch)
+		if err != nil {
+			log.WithError(err).Warn("Got transcoding error")
+			cancel()
+		}
+	}()
+
 	probeError := make(chan error, 1)
 	go func() {
 		mux := http.NewServeMux()
@@ -255,6 +271,24 @@ func run(c *cli.Context) error {
 		probeError <- err
 	}()
 
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case <-agln.Expire():
+		log.Info("Nobody here for so long!")
+	case sig := <-sigs:
+		log.WithField("signal", sig).Info("Got syscall")
+	case err := <-probeError:
+		return errors.Wrap(err, "Got probe service error")
+	case err := <-httpError:
+		return errors.Wrap(err, "Got http error")
+	}
+	log.Info("Shooting down... at last!")
+	return nil
+}
+
+func transcode(ctx context.Context, c *cli.Context, in string, out string, ch chan string) error {
 	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(c.Int("probe-timeout"))*time.Second)
 	defer cancel()
 
@@ -267,30 +301,10 @@ func run(c *cli.Context) error {
 	opts.grace = time.Duration(c.Int("transcode-grace")) * time.Second
 	opts.preset = c.String("preset")
 
-	transcodingError := make(chan error)
-	go func() {
-		err := Transcode(ctx, pr, in, out, opts, ch)
-		if err != nil {
-			transcodingError <- err
-		}
-	}()
-
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
-	select {
-	case <-agln.Expire():
-		log.Info("Nobody here for so long!")
-	case sig := <-sigs:
-		log.WithField("signal", sig).Info("Got syscall")
-	case err := <-transcodingError:
-		return errors.Wrap(err, "Transcoding failed")
-	case err := <-probeError:
-		return errors.Wrap(err, "Got probe service error")
-	case err := <-httpError:
-		return errors.Wrap(err, "Got http error")
+	err = Transcode(ctx, pr, in, out, opts, ch)
+	if err != nil {
+		return errors.Wrap(err, "Failed to transcode")
 	}
-	log.Info("Shooting down... at last!")
 	return nil
 }
 
