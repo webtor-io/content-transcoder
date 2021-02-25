@@ -34,7 +34,7 @@ func run(c *cli.Context) (err error) {
 	defer probe.Close()
 
 	// Setting Waiter
-	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8|index.json$`))
+	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json$`))
 	defer waiter.Close()
 
 	// Setting Web
