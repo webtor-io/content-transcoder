@@ -39,7 +39,10 @@ func (s *Transcoder) Serve() (err error) {
 		return errors.Wrap(err, "Failed to get hls")
 	}
 
-	params := hls.GetFFmpegParams()
+	params, err := hls.GetFFmpegParams()
+	if err != nil {
+		return errors.Wrap(err, "Failed to get ffmpeg params")
+	}
 
 	log.Infof("Got ffmpeg params %-v", params)
 

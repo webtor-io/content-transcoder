@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	u "net/url"
 	"strings"
 	"sync"
 
@@ -67,9 +68,14 @@ type HLS struct {
 	subs    []*HLSStream
 }
 
-func (h *HLS) GetFFmpegParams() []string {
+func (h *HLS) GetFFmpegParams() ([]string, error) {
+
+	parsedURL, err := u.Parse(h.in)
+	if err != nil {
+		return nil, errors.Wrap(err, "Unable to parse url")
+	}
 	params := []string{
-		"-i", h.in,
+		"-i", parsedURL.String(),
 		"-err_detect", "ignore_err",
 		"-reconnect_at_eof", "1",
 		"-reconnect_streamed", "1",
@@ -82,7 +88,7 @@ func (h *HLS) GetFFmpegParams() []string {
 	for _, s := range h.subs {
 		params = append(params, s.GetFFmpegParams()...)
 	}
-	return params
+	return params, nil
 }
 
 type HLSStream struct {

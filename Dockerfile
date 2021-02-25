@@ -1,5 +1,5 @@
 # ffmpeg image
-FROM jrottenberg/ffmpeg:4.0-alpine AS ffmpeg
+FROM jrottenberg/ffmpeg:4.1-alpine AS ffmpeg
 
 # golang image
 FROM golang:latest AS build
