@@ -13,10 +13,9 @@
 *.db
 
 tmp
-server/out/*
-!server/out/.keep
+out/*
+!out/.keep
 
 server/server
-client/client
 
 .DS_Store

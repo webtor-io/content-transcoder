@@ -1,5 +1,5 @@
 # ffmpeg image
-FROM jrottenberg/ffmpeg:4.0-alpine AS ffmpeg
+FROM jrottenberg/ffmpeg:4.1-alpine AS ffmpeg
 
 # golang image
 FROM golang:latest AS build
@@ -20,7 +20,7 @@ ENV CGO_ENABLED=0
 ENV GOOS=linux
 
 # build the binary with debug information removed
-RUN cd ./server && go build -mod=vendor -ldflags '-w -s' -a -installsuffix cgo -o server
+RUN go build -mod=vendor -ldflags '-w -s' -a -installsuffix cgo -o server
 
 FROM alpine:latest
 
@@ -31,7 +31,7 @@ COPY --from=ffmpeg /usr/local /usr/local
 RUN apk add --no-cache --update libgcc libstdc++ ca-certificates libcrypto1.1 libssl1.1 libgomp expat
 
 # copy our static linked library
-COPY --from=build /app/server/server .
+COPY --from=build /app/server .
 
 # make output dir
 RUN mkdir ./out
