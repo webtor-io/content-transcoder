@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	u "net/url"
 	"os/exec"
 	"sync"
@@ -54,6 +55,7 @@ type ContentProbe struct {
 	err     error
 	r       *cp.ProbeReply
 	inited  bool
+	out     string
 }
 
 func NewContentProbe(c *cli.Context) *ContentProbe {
@@ -62,6 +64,7 @@ func NewContentProbe(c *cli.Context) *ContentProbe {
 		port:    c.Int(contentProberPortFlag),
 		timeout: c.Int(contentProberTimeoutFlag),
 		input:   c.String(inputFlag),
+		out:     c.String(outputFlag),
 	}
 }
 
@@ -76,13 +79,33 @@ func (s *ContentProbe) Get() (*cp.ProbeReply, error) {
 	return s.r, s.err
 }
 
-func (s *ContentProbe) get() (*cp.ProbeReply, error) {
+func (s *ContentProbe) get() (pr *cp.ProbeReply, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.timeout)*time.Second)
 	defer cancel()
 	if s.host == "" {
-		return s.localProbe(ctx)
+		pr, err = s.localProbe(ctx)
+	} else {
+
+		pr, err = s.remoteProbe(ctx)
 	}
-	return s.remoteProbe(ctx)
+
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to probe")
+	}
+
+	json, err := json.Marshal(pr)
+
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to convert probe result to json")
+	}
+
+	err = ioutil.WriteFile(s.out+"/index.json", json, 0644)
+
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to write probe result")
+	}
+
+	return
 }
 
 func (s *ContentProbe) remoteProbe(ctx context.Context) (*cp.ProbeReply, error) {
