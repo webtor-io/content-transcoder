@@ -183,7 +183,8 @@ func (s *Web) Serve() error {
 	case err := <-errCh:
 		return errors.Wrapf(err, "Failed to serve Web")
 	case <-agln.Expire():
-		return errors.Errorf("Nobody here for so long...")
+		log.Info("Nobody here for so long...")
+		return nil
 	}
 }
 
