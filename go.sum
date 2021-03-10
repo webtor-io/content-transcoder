@@ -24,6 +24,8 @@ github.com/aws/aws-sdk-go v1.36.28 h1:JVRN7BZgwQ31SQCBwG5QM445+ynJU0ruKu+miFIijY
 github.com/aws/aws-sdk-go v1.36.28/go.mod h1:hcU610XS61/+aQV88ixoOzUoG7v3b31pl2zKMmprdro=
 github.com/aws/aws-sdk-go v1.37.19 h1:/xKHoSsYfH9qe16pJAHIjqTVpMM2DRSsEt8Ok1bzYiw=
 github.com/aws/aws-sdk-go v1.37.19/go.mod h1:hcU610XS61/+aQV88ixoOzUoG7v3b31pl2zKMmprdro=
+github.com/aws/aws-sdk-go v1.37.24 h1:UmdPwGITvz//eFxNyuPlkq8KLlu4ZGvowsCQs+uFIp4=
+github.com/aws/aws-sdk-go v1.37.24/go.mod h1:hcU610XS61/+aQV88ixoOzUoG7v3b31pl2zKMmprdro=
 github.com/certifi/gocertifi v0.0.0-20190105021004-abcd57078448 h1:8tNk6SPXzLDnATTrWoI5Bgw9s/x4uf0kmBpk21NZgI4=
 github.com/certifi/gocertifi v0.0.0-20190105021004-abcd57078448/go.mod h1:GJKEexRPVJrBSOjoqN5VNOIKJ5Q3RViH6eu3puDRwx4=
 github.com/certifi/gocertifi v0.0.0-20190506164543-d2eda7129713 h1:UNOqI3EKhvbqV8f1Vm3NIwkrhq388sGCeAH2Op7w0rc=

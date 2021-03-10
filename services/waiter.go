@@ -15,18 +15,20 @@ import (
 )
 
 type Waiter struct {
-	path   string
-	re     *regexp.Regexp
-	locks  sync.Map
-	doneCh chan error
-	w      *fsnotify.Watcher
+	path       string
+	re         *regexp.Regexp
+	locks      sync.Map
+	doneCh     chan error
+	w          *fsnotify.Watcher
+	transcoder *Transcoder
 }
 
-func NewWaiter(c *cli.Context, re *regexp.Regexp) *Waiter {
+func NewWaiter(c *cli.Context, re *regexp.Regexp, transcoder *Transcoder) *Waiter {
 	return &Waiter{
-		path:   c.String(outputFlag),
-		re:     re,
-		doneCh: make(chan error),
+		path:       c.String(outputFlag),
+		re:         re,
+		doneCh:     make(chan error),
+		transcoder: transcoder,
 	}
 }
 
@@ -77,7 +79,7 @@ func (s *Waiter) Serve() error {
 func (s *Waiter) Wait(ctx context.Context, path string) chan error {
 	errCh := make(chan error)
 	go func() {
-		if !s.re.MatchString(path) {
+		if !s.re.MatchString(path) || s.transcoder.IsFinished() {
 			errCh <- nil
 		} else if _, err := os.Stat(s.path + path); os.IsNotExist(err) {
 			log.WithField("name", s.path+path).Info("Add request lock")

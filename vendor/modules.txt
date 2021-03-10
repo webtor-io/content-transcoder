@@ -1,6 +1,6 @@
 # cloud.google.com/go v0.41.0
 ## explicit
-# github.com/aws/aws-sdk-go v1.37.19
+# github.com/aws/aws-sdk-go v1.37.24
 ## explicit
 github.com/aws/aws-sdk-go/aws
 github.com/aws/aws-sdk-go/aws/arn
@@ -47,6 +47,8 @@ github.com/aws/aws-sdk-go/private/protocol/restjson
 github.com/aws/aws-sdk-go/private/protocol/restxml
 github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil
 github.com/aws/aws-sdk-go/service/s3
+github.com/aws/aws-sdk-go/service/s3/s3iface
+github.com/aws/aws-sdk-go/service/s3/s3manager
 github.com/aws/aws-sdk-go/service/sso
 github.com/aws/aws-sdk-go/service/sso/ssoiface
 github.com/aws/aws-sdk-go/service/sts
@@ -104,7 +106,6 @@ github.com/webtor-io/common-services
 github.com/webtor-io/content-prober/content-prober
 # github.com/webtor-io/gracenet v0.0.0-20200102122601-7e0e6f3c06b5
 ## explicit
-github.com/webtor-io/gracenet
 # golang.org/x/exp v0.0.0-20190627132806-fd42eb6b336f
 ## explicit
 # golang.org/x/image v0.0.0-20190703141733-d6a02ce849c9

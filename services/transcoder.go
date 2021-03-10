@@ -10,9 +10,10 @@ import (
 )
 
 type Transcoder struct {
-	cmd *exec.Cmd
-	h   *HLSParser
-	ch  chan error
+	cmd      *exec.Cmd
+	h        *HLSParser
+	ch       chan error
+	finished bool
 }
 
 func NewTranscoder(h *HLSParser) *Transcoder {
@@ -28,6 +29,9 @@ func (s *Transcoder) Close() error {
 	}
 	close(s.ch)
 	return nil
+}
+func (s *Transcoder) IsFinished() bool {
+	return s.finished
 }
 func (s *Transcoder) Serve() (err error) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
@@ -62,6 +66,7 @@ func (s *Transcoder) Serve() (err error) {
 		return errors.Wrap(err, "Failed to transcode")
 	}
 	log.Info("Transcoding finished")
+	s.finished = true
 	<-s.ch
 	return nil
 }

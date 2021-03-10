@@ -3,8 +3,11 @@ package services
 import "github.com/urfave/cli"
 
 const (
-	inputFlag  = "input"
-	outputFlag = "output"
+	inputFlag       = "input"
+	outputFlag      = "output"
+	infoHashFlag    = "info-hash"
+	filePathFlag    = "file-path"
+	UseSnapshotFlag = "use-snapshot"
 )
 
 func RegisterCommonFlags(c *cli.App) {
@@ -18,5 +21,17 @@ func RegisterCommonFlags(c *cli.App) {
 		Name:  outputFlag + ", o",
 		Usage: "output (local path)",
 		Value: "out",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   infoHashFlag,
+		EnvVar: "INFO_HASH",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   filePathFlag,
+		EnvVar: "FILE_PATH",
+	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   UseSnapshotFlag,
+		EnvVar: "USE_SNAPSHOT",
 	})
 }
