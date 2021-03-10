@@ -7,6 +7,7 @@ const (
 	outputFlag      = "output"
 	infoHashFlag    = "info-hash"
 	filePathFlag    = "file-path"
+	originPathFlag  = "origin-path"
 	UseSnapshotFlag = "use-snapshot"
 )
 
@@ -29,6 +30,10 @@ func RegisterCommonFlags(c *cli.App) {
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   filePathFlag,
 		EnvVar: "FILE_PATH",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   originPathFlag,
+		EnvVar: "ORIGIN_PATH",
 	})
 	c.Flags = append(c.Flags, cli.BoolFlag{
 		Name:   UseSnapshotFlag,
