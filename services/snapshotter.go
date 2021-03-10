@@ -115,7 +115,7 @@ func (s *Snapshotter) snapshot() error {
 
 func (s *Snapshotter) shouldRun() (bool, error) {
 	// return true, nil
-	return false, nil
+	// return false, nil
 	os, err := s.osf.Fetch()
 	if err != nil {
 		return false, errors.Wrapf(err, "Failed to fetch original size")
