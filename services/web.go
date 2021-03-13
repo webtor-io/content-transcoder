@@ -81,7 +81,7 @@ func (s *Web) buildHandler() {
 	if s.player {
 		mux.Handle("/player/", http.StripPrefix("/player/", http.FileServer(http.Dir("./player"))))
 	}
-	mux.Handle("/index.m3u8", enrichPlaylistHandler(indexPlaylistHandler(s.h)))
+	mux.Handle("/index.m3u8", enrichPlaylistHandler(indexPlaylistHandler(s.h, s.output)))
 	fileH := http.FileServer(http.Dir(s.output))
 	enrichH := enrichPlaylistHandler(fileH)
 	waitH := waitHandler(enrichH, s.w)
