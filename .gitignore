@@ -16,6 +16,6 @@ tmp
 out/*
 !out/.keep
 
-server/server
+content-transcoder
 
 .DS_Store
