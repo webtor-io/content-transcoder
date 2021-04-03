@@ -10,9 +10,6 @@ WORKDIR /app
 # copy the source files
 COPY . .
 
-# enable modules
-ENV GO111MODULE=on
-
 # disable crosscompiling 
 ENV CGO_ENABLED=0
 

@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"io/ioutil"
 	u "net/url"
 	"strings"
 	"sync"
@@ -244,7 +245,7 @@ func NewHLS(in string, out string, probe *cp.ProbeReply) *HLS {
 	return h
 }
 
-func (s *HLS) MakeMasterPlaylist() string {
+func (s *HLS) MakeMasterPlaylist() error {
 	var res strings.Builder
 	res.WriteString("#EXTM3U\n")
 	for _, a := range s.audio {
@@ -262,5 +263,5 @@ func (s *HLS) MakeMasterPlaylist() string {
 	}
 	res.WriteRune('\n')
 	res.WriteString(s.primary.GetPlaylistName())
-	return res.String()
+	return ioutil.WriteFile(s.out+"/index.m3u8", []byte(res.String()), 0644)
 }

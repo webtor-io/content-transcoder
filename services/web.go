@@ -79,11 +79,12 @@ func (s *Web) buildHandler() {
 	if s.player {
 		mux.Handle("/player/", http.StripPrefix("/player/", http.FileServer(http.Dir("./player"))))
 	}
-	mux.Handle("/index.m3u8", enrichPlaylistHandler(indexPlaylistHandler(s.h, s.output)))
 	fileH := http.FileServer(http.Dir(s.output))
 	enrichH := enrichPlaylistHandler(fileH)
-	mux.Handle("/", enrichH)
-	s.handler = allowCORSHandler(mux)
+	corsH := allowCORSHandler(enrichH)
+
+	mux.Handle("/", corsH)
+	s.handler = mux
 }
 
 func (s *Web) Serve() error {
