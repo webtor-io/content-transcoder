@@ -40,17 +40,18 @@ func run(c *cli.Context) (err error) {
 	transcoder := s.NewTranscoder(hls)
 	defer transcoder.Close()
 
-	// Setting Waiter
-	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json$`), transcoder)
-	defer waiter.Close()
-
 	// Setting Web
-	web := s.NewWeb(c, waiter, hls)
+	web := s.NewWeb(c, hls)
 	defer web.Close()
 
 	// Setting WebExpire
 	webExpire := s.NewWebExpire(c)
 	webExpire.Handle(web)
+
+	// Setting Waiter
+	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json$`), transcoder)
+	waiter.Handle(web)
+	defer waiter.Close()
 
 	var transcodeServer cs.Servable = transcoder
 

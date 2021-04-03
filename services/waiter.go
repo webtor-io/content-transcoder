@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,7 +51,7 @@ func (s *Waiter) Serve() error {
 					return
 				}
 				name := filepath.Base(event.Name)
-				if s.re.MatchString(name) && event.Op == fsnotify.Create {
+				if s.re.MatchString(name) && event.Op == fsnotify.Write {
 					log.WithField("name", name).Info("Got watcher event")
 					l, ok := s.locks.Load(name)
 					if ok {
@@ -104,4 +105,22 @@ func (s *Waiter) Close() {
 	if s.w != nil {
 		s.w.Close()
 	}
+}
+
+func (s *Waiter) Handle(h Handleable) {
+	h.Handle(func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			select {
+			case <-s.Wait(r.Context(), r.URL.Path):
+			case <-ctx.Done():
+				if ctx.Err() != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				break
+			}
+			h.ServeHTTP(w, r)
+		})
+	})
 }

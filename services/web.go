@@ -35,7 +35,6 @@ func RegisterWebFlags(c *cli.App) {
 }
 
 type Web struct {
-	w       *Waiter
 	h       *HLSParser
 	host    string
 	port    int
@@ -54,14 +53,13 @@ func getParam(headerName string, getName string, r *http.Request) string {
 	return r.URL.Query().Get(getName)
 }
 
-func NewWeb(c *cli.Context, w *Waiter, h *HLSParser) *Web {
+func NewWeb(c *cli.Context, h *HLSParser) *Web {
 	we := &Web{
 		host:   c.String(webHostFlag),
 		port:   c.Int(webPortFlag),
 		grace:  c.Int(webGraceFlag),
 		player: c.Bool(webPlayerFlag),
 		output: c.String(outputFlag),
-		w:      w,
 		h:      h,
 	}
 	we.buildHandler()
@@ -84,8 +82,7 @@ func (s *Web) buildHandler() {
 	mux.Handle("/index.m3u8", enrichPlaylistHandler(indexPlaylistHandler(s.h, s.output)))
 	fileH := http.FileServer(http.Dir(s.output))
 	enrichH := enrichPlaylistHandler(fileH)
-	waitH := waitHandler(enrichH, s.w)
-	mux.Handle("/", waitH)
+	mux.Handle("/", enrichH)
 	s.handler = allowCORSHandler(mux)
 }
 
