@@ -21,6 +21,7 @@ func configure(app *cli.App) {
 	s.RegisterS3SessionFlags(app)
 	s.RegisterS3StorageFlags(app)
 	s.RegisterWebExpireFlags(app)
+	s.RegisterServerWithErrorFlags(app)
 	cs.RegisterProbeFlags(app)
 	app.Action = run
 }
@@ -49,7 +50,7 @@ func run(c *cli.Context) (err error) {
 	webExpire.Handle(web)
 
 	// Setting Waiter
-	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json$`), transcoder)
+	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json|error\.log$`), transcoder)
 	waiter.Handle(web)
 	defer waiter.Close()
 
@@ -93,7 +94,7 @@ func run(c *cli.Context) (err error) {
 		transcodeServer = snapshotter
 	}
 
-	server := cs.NewServe(probe, transcodeServer, web, waiter, webExpire)
+	server := s.NewServeWithError(c, cs.NewServe(probe, transcodeServer, web, waiter, webExpire))
 
 	// And SERVE!
 	err = server.Serve()

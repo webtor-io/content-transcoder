@@ -56,7 +56,6 @@ func (s *Snapshotter) Serve() error {
 	go func() {
 		err := s.transcoder.Serve()
 		if err != nil {
-			<-time.After(5 * time.Minute)
 			errCh <- err
 			return
 		}
