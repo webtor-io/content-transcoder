@@ -16,20 +16,19 @@ import (
 )
 
 type Waiter struct {
-	path       string
-	re         *regexp.Regexp
-	locks      sync.Map
-	doneCh     chan error
-	w          *fsnotify.Watcher
-	transcoder *Transcoder
+	path   string
+	re     *regexp.Regexp
+	locks  sync.Map
+	doneCh chan error
+	w      *fsnotify.Watcher
+	closed bool
 }
 
-func NewWaiter(c *cli.Context, re *regexp.Regexp, transcoder *Transcoder) *Waiter {
+func NewWaiter(c *cli.Context, re *regexp.Regexp) *Waiter {
 	return &Waiter{
-		path:       c.String(outputFlag),
-		re:         re,
-		doneCh:     make(chan error),
-		transcoder: transcoder,
+		path:   c.String(outputFlag),
+		re:     re,
+		doneCh: make(chan error),
 	}
 }
 
@@ -80,12 +79,13 @@ func (s *Waiter) Serve() error {
 func (s *Waiter) Wait(ctx context.Context, path string) chan error {
 	errCh := make(chan error)
 	go func() {
-		if !s.re.MatchString(path) || s.transcoder.IsFinished() {
+		if !s.re.MatchString(path) || s.closed {
 			errCh <- nil
 		} else if _, err := os.Stat(s.path + path); os.IsNotExist(err) {
 			log.WithField("name", s.path+path).Info("Add request lock")
 			al, _ := s.locks.LoadOrStore(path, NewAccessLock())
 			select {
+			case <-s.doneCh:
 			case <-al.(*AccessLock).Unlocked():
 				errCh <- nil
 				break
@@ -101,6 +101,10 @@ func (s *Waiter) Wait(ctx context.Context, path string) chan error {
 }
 
 func (s *Waiter) Close() {
+	if s.closed {
+		return
+	}
+	s.closed = true
 	close(s.doneCh)
 	if s.w != nil {
 		s.w.Close()

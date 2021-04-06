@@ -50,7 +50,7 @@ func run(c *cli.Context) (err error) {
 	webExpire.Handle(web)
 
 	// Setting Waiter
-	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json|error\.log$`), transcoder)
+	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json|error\.log$`))
 	waiter.Handle(web)
 	defer waiter.Close()
 
@@ -94,7 +94,9 @@ func run(c *cli.Context) (err error) {
 		transcodeServer = snapshotter
 	}
 
-	server := s.NewServeWithError(c, cs.NewServe(probe, transcodeServer, web, waiter, webExpire))
+	server := s.NewServeWithError(c, cs.NewServe(probe, transcodeServer, web, waiter, webExpire), func(err error) {
+		waiter.Close()
+	})
 
 	// And SERVE!
 	err = server.Serve()
