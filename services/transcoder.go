@@ -43,14 +43,14 @@ func (s *Transcoder) Serve() (err error) {
 		return errors.Wrap(err, "Failed to get hls")
 	}
 
-	err = hls.MakeMasterPlaylist()
-	if err != nil {
-		return errors.Wrap(err, "Failed to make master playlist")
-	}
-
 	params, err := hls.GetFFmpegParams()
 	if err != nil {
 		return errors.Wrap(err, "Failed to get ffmpeg params")
+	}
+
+	err = hls.MakeMasterPlaylist()
+	if err != nil {
+		return errors.Wrap(err, "Failed to make master playlist")
 	}
 
 	log.Infof("Got ffmpeg params %-v", params)
