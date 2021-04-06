@@ -76,6 +76,11 @@ func enrichPlaylistHandler(h http.Handler) http.Handler {
 
 		h.ServeHTTP(wi, r)
 
+		if wi.statusCode != http.StatusOK {
+			w.WriteHeader(wi.statusCode)
+			return
+		}
+
 		b := wi.GetBufferedBytes()
 
 		if !validatePlaylist(b, r) {

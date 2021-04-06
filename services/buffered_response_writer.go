@@ -23,6 +23,7 @@ func NewBufferedResponseWrtier(w http.ResponseWriter) *bufferedResponseWriter {
 }
 
 func (w *bufferedResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
 }
 
 func (w *bufferedResponseWriter) Write(p []byte) (int, error) {
