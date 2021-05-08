@@ -134,7 +134,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-preset", "veryfast",
 			"-b:v", "4.5M",
 			"-maxrate", "4.5M",
-			"-bufsize", "9M",
+			"-bufsize", "4.5M",
 		)
 	} else if h.st == Video && h.s.GetHeight() >= 720 {
 		params = append(
@@ -143,7 +143,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-preset", "veryfast",
 			"-b:v", "3M",
 			"-maxrate", "3M",
-			"-bufsize", "6M",
+			"-bufsize", "3M",
 		)
 	} else if h.st == Video && h.s.GetHeight() >= 480 {
 		params = append(
@@ -152,7 +152,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-preset", "veryfast",
 			"-b:v", "1.5M",
 			"-maxrate", "1.5M",
-			"-bufsize", "3M",
+			"-bufsize", "1.5M",
 		)
 	} else if h.st == Video {
 		params = append(
@@ -161,7 +161,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-preset", "veryfast",
 			"-b:v", "1M",
 			"-maxrate", "1M",
-			"-bufsize", "2M",
+			"-bufsize", "1M",
 		)
 	} else if h.st == Audio {
 		params = append(
