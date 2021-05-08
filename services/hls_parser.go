@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	u "net/url"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -77,9 +76,9 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 		return nil, errors.Wrap(err, "Unable to parse url")
 	}
 	if h.primary.s.GetCodecType() == "video" {
-		if h.primary.s.GetCodecName() == "hevc" {
-			return nil, errors.Errorf("hevc codec is not supported")
-		}
+		// if h.primary.s.GetCodecName() == "hevc" {
+		// 	return nil, errors.Errorf("hevc codec is not supported")
+		// }
 		if h.primary.s.GetHeight() > 1080 {
 			return nil, errors.Errorf("resoulution over 1080p is not supported")
 		}
@@ -129,14 +128,7 @@ func (h *HLSStream) GetCodecParams() []string {
 		fmt.Sprintf("-c:%v", h.st),
 	}
 
-	bitrate, err := strconv.Atoi(h.s.GetBitRate())
-	if err != nil {
-		bitrate = 0
-	}
-
-	bitrateT := 1024 * 1024 * 8
-
-	if h.st == Video && h.s.GetHeight() >= 1080 && (h.s.GetCodecName() != "h264" || bitrate > bitrateT) {
+	if h.st == Video && h.s.GetHeight() >= 1080 && h.s.GetCodecName() != "h264" {
 		params = append(
 			params,
 			"h264",
@@ -145,7 +137,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-maxrate", "4.5M",
 			"-bufsize", "4.5M",
 		)
-	} else if h.st == Video && h.s.GetHeight() >= 720 && (h.s.GetCodecName() != "h264" || bitrate > bitrateT) {
+	} else if h.st == Video && h.s.GetHeight() >= 720 && h.s.GetCodecName() != "h264" {
 		params = append(
 			params,
 			"h264",
@@ -154,7 +146,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-maxrate", "3M",
 			"-bufsize", "3M",
 		)
-	} else if h.st == Video && h.s.GetHeight() >= 480 && (h.s.GetCodecName() != "h264" || bitrate > bitrateT) {
+	} else if h.st == Video && h.s.GetHeight() >= 480 && h.s.GetCodecName() != "h264" {
 		params = append(
 			params,
 			"h264",
@@ -163,7 +155,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-maxrate", "1.5M",
 			"-bufsize", "1.5M",
 		)
-	} else if h.st == Video && (h.s.GetCodecName() != "h264" || bitrate > bitrateT) {
+	} else if h.st == Video && h.s.GetCodecName() != "h264" {
 		params = append(
 			params,
 			"h264",
