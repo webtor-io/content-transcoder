@@ -126,14 +126,41 @@ func (h *HLSStream) GetCodecParams() []string {
 	params := []string{
 		fmt.Sprintf("-c:%v", h.st),
 	}
-	if h.st == Video {
+	if h.st == Video && h.s.GetHeight() >= 1080 {
 		params = append(
 			params,
 			"h264",
 			"-preset", "veryfast",
-			"-b:v", "2M",
-			"-maxrate", "2M",
-			"-bufsize", "1M",
+			"-b:v", "4.5M",
+			"-maxrate", "4.5M",
+			"-bufsize", "9M",
+		)
+	} else if h.st == Video && h.s.GetHeight() >= 720 {
+		params = append(
+			params,
+			"h264",
+			"-preset", "veryfast",
+			"-b:v", "3M",
+			"-maxrate", "3M",
+			"-bufsize", "6M",
+		)
+	} else if h.st == Video && h.s.GetHeight() >= 480 {
+		params = append(
+			params,
+			"h264",
+			"-preset", "veryfast",
+			"-b:v", "1.5M",
+			"-maxrate", "1.5M",
+			"-bufsize", "3M",
+		)
+	} else if h.st == Video {
+		params = append(
+			params,
+			"h264",
+			"-preset", "veryfast",
+			"-b:v", "1M",
+			"-maxrate", "1M",
+			"-bufsize", "2M",
 		)
 	} else if h.st == Audio {
 		params = append(
