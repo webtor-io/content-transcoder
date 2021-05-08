@@ -172,7 +172,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-maxrate", "1M",
 			"-bufsize", "1M",
 		)
-	} else if h.st == Audio && h.s.GetCodecName() != "aac" {
+	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2) {
 		params = append(
 			params,
 			"libfdk_aac",
