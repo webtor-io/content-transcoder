@@ -84,6 +84,7 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 		}
 	}
 	params := []string{
+		"-re",
 		"-i", parsedURL.String(),
 		"-err_detect", "ignore_err",
 		"-reconnect_at_eof", "1",
