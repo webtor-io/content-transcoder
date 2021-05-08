@@ -76,9 +76,9 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 		return nil, errors.Wrap(err, "Unable to parse url")
 	}
 	if h.primary.s.GetCodecType() == "video" {
-		if h.primary.s.GetCodecName() == "hevc" {
-			return nil, errors.Errorf("hevc codec is not supported")
-		}
+		// if h.primary.s.GetCodecName() == "hevc" {
+		// 	return nil, errors.Errorf("hevc codec is not supported")
+		// }
 		if h.primary.s.GetHeight() > 1080 {
 			return nil, errors.Errorf("resoulution over 1080p is not supported")
 		}
