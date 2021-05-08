@@ -126,16 +126,16 @@ func (h *HLSStream) GetCodecParams() []string {
 	params := []string{
 		fmt.Sprintf("-c:%v", h.st),
 	}
-	if h.st == Video && h.s.GetCodecName() != "h264" {
+	if h.st == Video {
 		params = append(
 			params,
 			"h264",
-			"-preset", "ultrafast",
+			"-preset", "veryfast",
 			"-b:v", "2M",
 			"-maxrate", "2M",
 			"-bufsize", "1M",
 		)
-	} else if h.st == Audio && h.s.GetCodecName() != "aac" {
+	} else if h.st == Audio {
 		params = append(
 			params,
 			"libfdk_aac",
