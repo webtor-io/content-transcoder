@@ -74,6 +74,8 @@ func enrichPlaylistHandler(h http.Handler) http.Handler {
 
 		wi := NewBufferedResponseWrtier(w)
 
+		r.Header.Del("Range")
+
 		h.ServeHTTP(wi, r)
 
 		if wi.statusCode != http.StatusOK {
