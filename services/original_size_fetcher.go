@@ -36,9 +36,9 @@ func (s *OriginalSizeFetcher) Fetch() (uint64, error) {
 
 func (s *OriginalSizeFetcher) fetch() (uint64, error) {
 	res, err := s.cl.Head(s.url)
-	defer res.Body.Close()
 	if err != nil {
 		return 0, err
 	}
+	defer res.Body.Close()
 	return uint64(res.ContentLength), nil
 }

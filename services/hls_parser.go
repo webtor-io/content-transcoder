@@ -267,7 +267,7 @@ func NewHLS(in string, out string, probe *cp.ProbeReply) *HLS {
 		} else if s.GetCodecType() == "audio" {
 			h.audio = append(h.audio, NewHLSStream(ai, Audio, out, s))
 			ai++
-		} else if s.GetCodecType() == "subtitle" {
+		} else if s.GetCodecType() == "subtitle" && s.GetCodecName() != "hdmv_pgs_subtitle" {
 			h.subs = append(h.subs, NewHLSStream(si, Subtitle, out, s))
 			si++
 		}
