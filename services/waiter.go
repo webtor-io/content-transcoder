@@ -83,7 +83,7 @@ func (s *Waiter) Wait(ctx context.Context, path string) chan error {
 			errCh <- nil
 		} else if _, err := os.Stat(s.path + path); os.IsNotExist(err) {
 			log.WithField("name", s.path+path).Info("Add request lock")
-			al, _ := s.locks.LoadOrStore(path, NewAccessLock())
+			al, _ := s.locks.LoadOrStore(filepath.Base(path), NewAccessLock())
 			select {
 			case <-s.doneCh:
 			case <-al.(*AccessLock).Unlocked():
