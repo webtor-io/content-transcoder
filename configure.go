@@ -58,7 +58,7 @@ func run(c *cli.Context) (err error) {
 
 	if c.Bool(s.UseSnapshotFlag) {
 		httpClient := &http.Client{
-			Timeout: time.Second * 60,
+			Timeout: time.Second * 600,
 		}
 		// Setting S3 Session
 		s3Session := s.NewS3Session(c, httpClient)
