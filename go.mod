@@ -3,6 +3,7 @@ module github.com/webtor-io/content-transcoder
 require (
 	cloud.google.com/go v0.41.0 // indirect
 	github.com/aws/aws-sdk-go v1.37.24
+	github.com/fsnotify/fsnotify v1.4.9
 	github.com/go-fsnotify/fsnotify v0.0.0-20180321022601-755488143dae // indirect
 	github.com/joonix/log v0.0.0-20190524090622-13fe31bbdd7a
 	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
@@ -23,7 +24,7 @@ require (
 	golang.org/x/tools v0.0.0-20190706070813-72ffa07ba3db // indirect
 	google.golang.org/genproto v0.0.0-20190701230453-710ae3a149df // indirect
 	google.golang.org/grpc v1.22.0
-	gopkg.in/fsnotify.v1 v1.4.7
+	gopkg.in/fsnotify.v1 v1.4.7 // indirect
 	honnef.co/go/tools v0.0.0-20190614002413-cb51c254f01b // indirect
 )
 

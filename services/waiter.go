@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
-	"gopkg.in/fsnotify.v1"
 )
 
 type Waiter struct {
@@ -37,10 +37,6 @@ func (s *Waiter) Serve() error {
 	if err != nil {
 		return errors.Wrap(err, "Failed to init watcher")
 	}
-	err = watcher.Add(s.path)
-	if err != nil {
-		return errors.Wrap(err, "Failed add path for watcher")
-	}
 	s.w = watcher
 	go func() {
 		for {
@@ -54,9 +50,9 @@ func (s *Waiter) Serve() error {
 					log.WithField("name", name).Info("Got watcher event")
 					l, ok := s.locks.Load(name)
 					if ok {
-						log.WithField("name", name).Info("Release lock")
 						go func() {
 							<-time.After(500 * time.Millisecond)
+							log.WithField("name", name).Info("Release lock")
 							l.(*AccessLock).Unlock()
 						}()
 					}
@@ -66,12 +62,15 @@ func (s *Waiter) Serve() error {
 					return
 				}
 				if err != nil {
-					s.doneCh <- err
-					return
+					log.WithError(err).Error("Got watcher error")
 				}
 			}
 		}
 	}()
+	err = watcher.Add(s.path)
+	if err != nil {
+		return errors.Wrap(err, "Failed add path for watcher")
+	}
 	log.Info("Starting Waiter")
 	return <-s.doneCh
 }

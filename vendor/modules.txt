@@ -55,6 +55,9 @@ github.com/aws/aws-sdk-go/service/sts
 github.com/aws/aws-sdk-go/service/sts/stsiface
 # github.com/cpuguy83/go-md2man/v2 v2.0.0
 github.com/cpuguy83/go-md2man/v2/md2man
+# github.com/fsnotify/fsnotify v1.4.9
+## explicit
+github.com/fsnotify/fsnotify
 # github.com/go-fsnotify/fsnotify v0.0.0-20180321022601-755488143dae
 ## explicit
 # github.com/go-redis/redis v6.15.9+incompatible
@@ -208,6 +211,5 @@ google.golang.org/protobuf/types/known/durationpb
 google.golang.org/protobuf/types/known/timestamppb
 # gopkg.in/fsnotify.v1 v1.4.7
 ## explicit
-gopkg.in/fsnotify.v1
 # honnef.co/go/tools v0.0.0-20190614002413-cb51c254f01b
 ## explicit
