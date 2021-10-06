@@ -79,6 +79,9 @@ func (s *Web) buildHandler() {
 	if s.player {
 		mux.Handle("/player/", http.StripPrefix("/player/", http.FileServer(http.Dir("./player"))))
 	}
+	mux.HandleFunc("/touch", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 	fileH := http.FileServer(http.Dir(s.output))
 	enrichH := enrichPlaylistHandler(fileH)
 	corsH := allowCORSHandler(enrichH)

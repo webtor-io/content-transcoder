@@ -9,6 +9,8 @@ const (
 	filePathFlag    = "file-path"
 	originPathFlag  = "origin-path"
 	UseSnapshotFlag = "use-snapshot"
+	StreamModeFlag  = "stream-mode"
+	KeyPrefixFlag   = "key-prefix"
 )
 
 func RegisterCommonFlags(c *cli.App) {
@@ -24,6 +26,12 @@ func RegisterCommonFlags(c *cli.App) {
 		Value: "out",
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   StreamModeFlag + ", sm",
+		Usage:  "stream mode (online, multibitrate)",
+		Value:  "online",
+		EnvVar: "STREAM_MODE",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   infoHashFlag,
 		EnvVar: "INFO_HASH",
 	})
@@ -34,6 +42,11 @@ func RegisterCommonFlags(c *cli.App) {
 	c.Flags = append(c.Flags, cli.StringFlag{
 		Name:   originPathFlag,
 		EnvVar: "ORIGIN_PATH",
+	})
+	c.Flags = append(c.Flags, cli.StringFlag{
+		Name:   KeyPrefixFlag,
+		Value:  "transcoder",
+		EnvVar: "KEY_PREFIX",
 	})
 	c.Flags = append(c.Flags, cli.BoolFlag{
 		Name:   UseSnapshotFlag,

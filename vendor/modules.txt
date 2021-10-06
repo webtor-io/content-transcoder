@@ -1,7 +1,5 @@
-# cloud.google.com/go v0.41.0
-## explicit
 # github.com/aws/aws-sdk-go v1.37.24
-## explicit
+## explicit; go 1.11
 github.com/aws/aws-sdk-go/aws
 github.com/aws/aws-sdk-go/aws/arn
 github.com/aws/aws-sdk-go/aws/awserr
@@ -54,13 +52,13 @@ github.com/aws/aws-sdk-go/service/sso/ssoiface
 github.com/aws/aws-sdk-go/service/sts
 github.com/aws/aws-sdk-go/service/sts/stsiface
 # github.com/cpuguy83/go-md2man/v2 v2.0.0
+## explicit; go 1.12
 github.com/cpuguy83/go-md2man/v2/md2man
 # github.com/fsnotify/fsnotify v1.4.9
-## explicit
+## explicit; go 1.13
 github.com/fsnotify/fsnotify
-# github.com/go-fsnotify/fsnotify v0.0.0-20180321022601-755488143dae
-## explicit
 # github.com/go-redis/redis v6.15.9+incompatible
+## explicit
 github.com/go-redis/redis
 github.com/go-redis/redis/internal
 github.com/go-redis/redis/internal/consistenthash
@@ -69,6 +67,7 @@ github.com/go-redis/redis/internal/pool
 github.com/go-redis/redis/internal/proto
 github.com/go-redis/redis/internal/util
 # github.com/golang/protobuf v1.4.2
+## explicit; go 1.9
 github.com/golang/protobuf/proto
 github.com/golang/protobuf/protoc-gen-go/descriptor
 github.com/golang/protobuf/ptypes
@@ -76,48 +75,35 @@ github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/timestamp
 # github.com/jmespath/go-jmespath v0.4.0
+## explicit; go 1.14
 github.com/jmespath/go-jmespath
 # github.com/joonix/log v0.0.0-20190524090622-13fe31bbdd7a
-## explicit
+## explicit; go 1.12
 github.com/joonix/log
-# github.com/konsorten/go-windows-terminal-sequences v1.0.2
-## explicit
-# github.com/kr/pty v1.1.5
-## explicit
 # github.com/magefile/mage v1.11.0
-## explicit
+## explicit; go 1.12
 github.com/magefile/mage/mg
 github.com/magefile/mage/sh
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
 # github.com/russross/blackfriday/v2 v2.1.0
+## explicit
 github.com/russross/blackfriday/v2
 # github.com/sirupsen/logrus v1.8.0
-## explicit
+## explicit; go 1.13
 github.com/sirupsen/logrus
-# github.com/stretchr/objx v0.2.0
-## explicit
 # github.com/urfave/cli v1.22.5
-## explicit
+## explicit; go 1.11
 github.com/urfave/cli
 # github.com/webtor-io/common-services v0.0.0-20210226102216-588bd8948e0e
-## explicit
+## explicit; go 1.15
 github.com/webtor-io/common-services
 # github.com/webtor-io/content-prober v0.0.0-20200102132143-472d3c9cba76
-## explicit
+## explicit; go 1.13
 github.com/webtor-io/content-prober/content-prober
-# github.com/webtor-io/gracenet v0.0.0-20200102122601-7e0e6f3c06b5
-## explicit
-# golang.org/x/exp v0.0.0-20190627132806-fd42eb6b336f
-## explicit
-# golang.org/x/image v0.0.0-20190703141733-d6a02ce849c9
-## explicit
-# golang.org/x/mobile v0.0.0-20190607214518-6fa95d984e88
-## explicit
-# golang.org/x/mod v0.1.0
-## explicit
 # golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
+## explicit; go 1.11
 golang.org/x/net/context
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2
@@ -126,17 +112,16 @@ golang.org/x/net/idna
 golang.org/x/net/internal/timeseries
 golang.org/x/net/trace
 # golang.org/x/sys v0.0.0-20210225134936-a50acf3fe073
-## explicit
+## explicit; go 1.12
 golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
 golang.org/x/sys/windows
 # golang.org/x/text v0.3.3
+## explicit; go 1.11
 golang.org/x/text/secure/bidirule
 golang.org/x/text/transform
 golang.org/x/text/unicode/bidi
 golang.org/x/text/unicode/norm
-# golang.org/x/tools v0.0.0-20190706070813-72ffa07ba3db
-## explicit
 # google.golang.org/genproto v0.0.0-20190701230453-710ae3a149df
 ## explicit
 google.golang.org/genproto/googleapis/api/annotations
@@ -178,6 +163,7 @@ google.golang.org/grpc/stats
 google.golang.org/grpc/status
 google.golang.org/grpc/tap
 # google.golang.org/protobuf v1.23.0
+## explicit; go 1.9
 google.golang.org/protobuf/encoding/prototext
 google.golang.org/protobuf/encoding/protowire
 google.golang.org/protobuf/internal/descfmt
@@ -209,7 +195,3 @@ google.golang.org/protobuf/types/descriptorpb
 google.golang.org/protobuf/types/known/anypb
 google.golang.org/protobuf/types/known/durationpb
 google.golang.org/protobuf/types/known/timestamppb
-# gopkg.in/fsnotify.v1 v1.4.7
-## explicit
-# honnef.co/go/tools v0.0.0-20190614002413-cb51c254f01b
-## explicit

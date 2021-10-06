@@ -12,7 +12,7 @@ type Key struct {
 }
 
 func NewKey(c *cli.Context) *Key {
-	key := fmt.Sprintf("%x", sha1.Sum([]byte("transcoder"+c.String(infoHashFlag)+c.String(originPathFlag))))
+	key := fmt.Sprintf("%x", sha1.Sum([]byte(c.String(KeyPrefixFlag)+c.String(infoHashFlag)+c.String(originPathFlag))))
 	return &Key{
 		key: key,
 	}

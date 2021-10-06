@@ -113,6 +113,9 @@ func (s *Snapshotter) snapshot() error {
 }
 
 func (s *Snapshotter) shouldRun() (bool, error) {
+	if s.downloadRatio == 0 {
+		return true, nil
+	}
 	// return true, nil
 	// return false, nil
 	os, err := s.osf.Fetch()
