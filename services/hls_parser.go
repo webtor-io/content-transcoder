@@ -14,36 +14,39 @@ import (
 )
 
 type Rendition struct {
-	Width  uint
 	Height uint
-	Rate   uint
+}
+
+func (s *Rendition) Rate() uint {
+	h := s.Height
+	if h <= 240 {
+		return 200
+	} else if h <= 360 {
+		return 400
+	} else if h <= 480 {
+		return 800
+	} else if h <= 720 {
+		return 1600
+	} else {
+		return 3200
+	}
 }
 
 var DefaultRenditions = []Rendition{
 	{
 		Height: 240,
-		Width:  426,
-		Rate:   200,
 	},
 	{
 		Height: 360,
-		Width:  640,
-		Rate:   400,
 	},
 	{
 		Height: 480,
-		Width:  842,
-		Rate:   800,
 	},
 	{
 		Height: 720,
-		Width:  1280,
-		Rate:   1600,
 	},
 	{
 		Height: 1080,
-		Width:  1920,
-		Rate:   3200,
 	},
 }
 
@@ -190,15 +193,15 @@ func (h *HLSStream) GetCodecParams() []string {
 		params = append(
 			params,
 			"h264",
-			"-vf", fmt.Sprintf("scale=w=%v:h=%v:force_original_aspect_ratio=decrease", h.r.Width, h.r.Height),
+			"-vf", fmt.Sprintf("scale=-2:%v", h.r.Height),
 			"-profile:v", "main",
 			// "-crf", "20",
-			"-preset", "veryslow",
+			// "-preset", "veryslow",
 			"-g", "48", "-keyint_min", "48",
 			"-sc_threshold", "0",
-			"-b:v", fmt.Sprintf("%vK", h.r.Rate),
-			"-maxrate", fmt.Sprintf("%vK", h.r.Rate),
-			"-bufsize", fmt.Sprintf("%vK", h.r.Rate),
+			"-b:v", fmt.Sprintf("%vK", h.r.Rate()),
+			"-maxrate", fmt.Sprintf("%vK", h.r.Rate()),
+			"-bufsize", fmt.Sprintf("%vK", h.r.Rate()),
 		)
 	} else if h.st == Video && h.s.GetHeight() >= 1080 && h.s.GetCodecName() != "h264" {
 		params = append(
@@ -343,13 +346,17 @@ func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 			if sm == Online {
 				h.video = append(h.video, NewHLSStream(vi, Video, out, s, nil))
 			} else if sm == MultiBitrate {
+				var max uint
 				for ri := range DefaultRenditions {
 					if uint(s.GetHeight()) >= DefaultRenditions[ri].Height {
 						h.video = append(h.video, NewHLSStream(vi, Video, out, s, &DefaultRenditions[ri]))
+						max = DefaultRenditions[ri].Height
 					}
 				}
-				if len(h.video) == 0 {
-					h.video = append(h.video, NewHLSStream(vi, Video, out, s, nil))
+				if len(h.video) == 0 || max < uint(s.GetHeight()) {
+					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{
+						Height: uint(s.GetHeight()),
+					}))
 				}
 			}
 			vi++
@@ -383,7 +390,7 @@ func (s *HLS) MakeMasterPlaylist() error {
 	for _, p := range s.primary {
 		var rate uint = 1
 		if p.r != nil {
-			rate = p.r.Rate * 1000
+			rate = p.r.Rate() * 1000
 		}
 		res.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=%v,CODECS=\"avc1.42e00a,mp4a.40.2\"", rate))
 		if len(s.audio) > 0 {
