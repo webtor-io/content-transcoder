@@ -47,7 +47,7 @@ func (s *Waiter) Serve() error {
 				}
 				name := filepath.Base(event.Name)
 				if s.re.MatchString(name) {
-					log.WithField("name", name).WithField("op", event.Op).Info("Got watcher event")
+					// log.WithField("name", name).WithField("op", event.Op).Info("Got watcher event")
 					l, ok := s.locks.Load(name)
 					if ok {
 						go func() {

@@ -13,12 +13,12 @@ import (
 )
 
 const (
-	webGraceFlag = "grace"
+	WebGraceFlag = "grace"
 )
 
 func RegisterWebExpireFlags(c *cli.App) {
 	c.Flags = append(c.Flags, cli.IntFlag{
-		Name:   webGraceFlag + ", ag",
+		Name:   WebGraceFlag + ", ag",
 		Usage:  "access grace in seconds",
 		Value:  600,
 		EnvVar: "GRACE",
@@ -31,7 +31,7 @@ type WebExpire struct {
 }
 
 func NewWebExpire(c *cli.Context) *WebExpire {
-	d := time.Duration(c.Int(webGraceFlag)) * time.Second
+	d := time.Duration(c.Int(WebGraceFlag)) * time.Second
 	return &WebExpire{d: d, t: time.NewTimer(d)}
 }
 

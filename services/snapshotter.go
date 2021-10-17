@@ -34,6 +34,8 @@ type Snapshotter struct {
 	osf           *OriginalSizeFetcher
 	dsf           *DownloadedSizeFetcher
 	ch            chan error
+	force         bool
+	toCompletion  bool
 }
 
 func NewSpapshotter(c *cli.Context, co *Counter, st *S3Storage, key *Key, transcoder *Transcoder, osf *OriginalSizeFetcher, dsf *DownloadedSizeFetcher) *Snapshotter {
@@ -48,10 +50,23 @@ func NewSpapshotter(c *cli.Context, co *Counter, st *S3Storage, key *Key, transc
 		osf:           osf,
 		dsf:           dsf,
 		ch:            make(chan error),
+		force:         c.Bool(forceTranscodeFlag),
+		toCompletion:  c.Bool(ToCompletionFlag),
 	}
 }
 
 func (s *Snapshotter) Serve() error {
+	if !s.force {
+		ok, err := s.storage.CheckDoneMarker(context.Background(), s.key.Get())
+		if err != nil {
+			return errors.Wrapf(err, "Failed to check done marker")
+		}
+		if ok {
+			log.Info("Content is already transcoded")
+			return nil
+		}
+	}
+
 	errCh := make(chan error)
 	go func() {
 		err := s.transcoder.Serve()
@@ -65,6 +80,9 @@ func (s *Snapshotter) Serve() error {
 		err := s.snapshot()
 		if err != nil {
 			errCh <- err
+		}
+		if s.toCompletion {
+			errCh <- nil
 		}
 	}()
 	select {

@@ -38,7 +38,6 @@ type Web struct {
 	h       *HLSParser
 	host    string
 	port    int
-	grace   int
 	player  bool
 	output  string
 	handler http.Handler
@@ -57,7 +56,6 @@ func NewWeb(c *cli.Context, h *HLSParser) *Web {
 	we := &Web{
 		host:   c.String(webHostFlag),
 		port:   c.Int(webPortFlag),
-		grace:  c.Int(webGraceFlag),
 		player: c.Bool(webPlayerFlag),
 		output: c.String(outputFlag),
 		h:      h,

@@ -38,16 +38,12 @@ func run(c *cli.Context) (err error) {
 	defer probe.Close()
 
 	// Setting Transcoder
-	transcoder := s.NewTranscoder(hls)
+	transcoder := s.NewTranscoder(c, hls)
 	defer transcoder.Close()
 
 	// Setting Web
 	web := s.NewWeb(c, hls)
 	defer web.Close()
-
-	// Setting WebExpire
-	webExpire := s.NewWebExpire(c)
-	webExpire.Handle(web)
 
 	// Setting Waiter
 	waiter := s.NewWaiter(c, regexp.MustCompile(`\.m3u8$|index\.json|error\.log$`))
@@ -94,7 +90,16 @@ func run(c *cli.Context) (err error) {
 		transcodeServer = snapshotter
 	}
 
-	server := s.NewServeWithError(c, cs.NewServe(probe, transcodeServer, web, waiter, webExpire), func(err error) {
+	servers := []cs.Servable{probe, transcodeServer, web, waiter}
+
+	if c.Int(s.WebGraceFlag) > 0 {
+		// Setting WebExpire
+		webExpire := s.NewWebExpire(c)
+		webExpire.Handle(web)
+		servers = append(servers, webExpire)
+	}
+
+	server := s.NewServeWithStatus(c, cs.NewServe(servers...), func(err error) {
 		waiter.Close()
 	})
 

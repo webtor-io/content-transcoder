@@ -7,19 +7,22 @@ import (
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 )
 
 type Transcoder struct {
-	cmd      *exec.Cmd
-	h        *HLSParser
-	ch       chan error
-	finished bool
+	cmd          *exec.Cmd
+	h            *HLSParser
+	ch           chan error
+	finished     bool
+	toCompletion bool
 }
 
-func NewTranscoder(h *HLSParser) *Transcoder {
+func NewTranscoder(c *cli.Context, h *HLSParser) *Transcoder {
 	return &Transcoder{
-		h:  h,
-		ch: make(chan error),
+		h:            h,
+		ch:           make(chan error),
+		toCompletion: c.Bool(ToCompletionFlag),
 	}
 }
 
@@ -72,6 +75,9 @@ func (s *Transcoder) Serve() (err error) {
 	}
 	log.Info("Transcoding finished")
 	s.finished = true
+	if s.toCompletion {
+		return nil
+	}
 	<-s.ch
 	return nil
 }

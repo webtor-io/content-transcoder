@@ -3,13 +3,15 @@ package main
 import (
 	"os"
 
-	joonix "github.com/joonix/log"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
 func main() {
-	log.SetFormatter(joonix.NewFormatter())
+	// log.SetFormatter(joonix.NewFormatter())
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
 	app := cli.NewApp()
 	app.Name = "content-transcoder"
 	app.Usage = "runs content transcoder"

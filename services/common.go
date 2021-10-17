@@ -3,14 +3,16 @@ package services
 import "github.com/urfave/cli"
 
 const (
-	inputFlag       = "input"
-	outputFlag      = "output"
-	infoHashFlag    = "info-hash"
-	filePathFlag    = "file-path"
-	originPathFlag  = "origin-path"
-	UseSnapshotFlag = "use-snapshot"
-	StreamModeFlag  = "stream-mode"
-	KeyPrefixFlag   = "key-prefix"
+	inputFlag          = "input"
+	outputFlag         = "output"
+	infoHashFlag       = "info-hash"
+	filePathFlag       = "file-path"
+	originPathFlag     = "origin-path"
+	UseSnapshotFlag    = "use-snapshot"
+	StreamModeFlag     = "stream-mode"
+	KeyPrefixFlag      = "key-prefix"
+	ToCompletionFlag   = "to-completion"
+	forceTranscodeFlag = "force-trancode"
 )
 
 func RegisterCommonFlags(c *cli.App) {
@@ -51,5 +53,13 @@ func RegisterCommonFlags(c *cli.App) {
 	c.Flags = append(c.Flags, cli.BoolFlag{
 		Name:   UseSnapshotFlag,
 		EnvVar: "USE_SNAPSHOT",
+	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   ToCompletionFlag,
+		EnvVar: "TO_COMPLETION",
+	})
+	c.Flags = append(c.Flags, cli.BoolFlag{
+		Name:   forceTranscodeFlag,
+		EnvVar: "FORCE_TRANSCODE",
 	})
 }
