@@ -353,7 +353,7 @@ func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 						max = DefaultRenditions[ri].Height
 					}
 				}
-				if len(h.video) == 0 || max < uint(s.GetHeight()) {
+				if len(h.video) == 0 || max+100 < uint(s.GetHeight()) {
 					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{
 						Height: uint(s.GetHeight()),
 					}))
