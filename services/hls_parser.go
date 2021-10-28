@@ -143,6 +143,7 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 		"-i", parsedURL.String(),
 		// "-err_detect", "ignore_err",
 		// "-reconnect_at_eof", "1",
+		"-xerror",
 		"-seekable", "1",
 	)
 	for _, s := range h.primary {
