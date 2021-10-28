@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"time"
 
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	cs "github.com/webtor-io/common-services"
@@ -27,6 +31,13 @@ func configure(app *cli.App) {
 }
 
 func run(c *cli.Context) (err error) {
+	outLog, err := os.Create(fmt.Sprintf("%v/%v", c.String(s.OutputFlag), "output.log"))
+	if err != nil {
+		return errors.Wrapf(err, "Failed create %v", fmt.Sprintf("%v/%v", c.String(s.OutputFlag), "output.log"))
+	}
+	defer outLog.Close()
+	log.SetOutput(io.MultiWriter(os.Stdout, outLog))
+
 	// Setting ContentProbe
 	contentProbe := s.NewContentProbe(c)
 

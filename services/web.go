@@ -57,7 +57,7 @@ func NewWeb(c *cli.Context, h *HLSParser) *Web {
 		host:   c.String(webHostFlag),
 		port:   c.Int(webPortFlag),
 		player: c.Bool(webPlayerFlag),
-		output: c.String(outputFlag),
+		output: c.String(OutputFlag),
 		h:      h,
 	}
 	we.buildHandler()

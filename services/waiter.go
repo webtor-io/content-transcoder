@@ -26,7 +26,7 @@ type Waiter struct {
 
 func NewWaiter(c *cli.Context, re *regexp.Regexp) *Waiter {
 	return &Waiter{
-		path:   c.String(outputFlag),
+		path:   c.String(OutputFlag),
 		re:     re,
 		doneCh: make(chan error),
 	}

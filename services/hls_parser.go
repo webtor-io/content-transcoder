@@ -76,7 +76,7 @@ func NewHLSParser(c *cli.Context, pr *ContentProbe) *HLSParser {
 	}
 	return &HLSParser{
 		in:    c.String(inputFlag),
-		out:   c.String(outputFlag),
+		out:   c.String(OutputFlag),
 		probe: pr,
 		sm:    sm,
 	}
@@ -194,8 +194,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"h264",
 			"-vf", fmt.Sprintf("scale=-2:%v", h.r.Height),
 			"-profile:v", "main",
-			// "-crf", "20",
-			"-preset", "veryslow",
+			"-preset", "veryfast",
 			"-g", "48", "-keyint_min", "48",
 			"-sc_threshold", "0",
 			"-b:v", fmt.Sprintf("%vK", h.r.Rate()),

@@ -1,6 +1,8 @@
 package services
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -13,6 +15,7 @@ import (
 type Transcoder struct {
 	cmd          *exec.Cmd
 	h            *HLSParser
+	out          string
 	ch           chan error
 	finished     bool
 	toCompletion bool
@@ -23,6 +26,7 @@ func NewTranscoder(c *cli.Context, h *HLSParser) *Transcoder {
 		h:            h,
 		ch:           make(chan error),
 		toCompletion: c.Bool(ToCompletionFlag),
+		out:          c.String(OutputFlag),
 	}
 }
 
@@ -60,8 +64,20 @@ func (s *Transcoder) Serve() (err error) {
 
 	s.cmd = exec.Command(ffmpeg, params...)
 
-	s.cmd.Stdout = os.Stdout
-	s.cmd.Stderr = os.Stderr
+	outLog, err := os.Create(fmt.Sprintf("%v/%v", s.out, "ffmpeg.out"))
+	if err != nil {
+		return errors.Wrapf(err, "Failed create %v", fmt.Sprintf("%v/%v", s.out, "ffmpeg.out"))
+	}
+	defer outLog.Close()
+
+	errLog, err := os.Create(fmt.Sprintf("%v/%v", s.out, "ffmpeg.err"))
+	if err != nil {
+		return errors.Wrapf(err, "Failed create %v", fmt.Sprintf("%v/%v", s.out, "ffmpeg.out"))
+	}
+	defer errLog.Close()
+
+	s.cmd.Stdout = io.MultiWriter(os.Stdout, outLog)
+	s.cmd.Stderr = io.MultiWriter(os.Stderr, errLog)
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	err = s.cmd.Start()

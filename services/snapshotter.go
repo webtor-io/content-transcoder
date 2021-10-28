@@ -42,7 +42,7 @@ func NewSpapshotter(c *cli.Context, co *Counter, st *S3Storage, key *Key, transc
 	return &Snapshotter{
 		downloadRatio: c.Float64(snapshotDownloadRatioFlag),
 		counter:       co,
-		out:           c.String(outputFlag),
+		out:           c.String(OutputFlag),
 		storage:       st,
 		key:           key,
 		stopCh:        make(chan error),

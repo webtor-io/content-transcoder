@@ -64,7 +64,7 @@ func NewContentProbe(c *cli.Context) *ContentProbe {
 		port:    c.Int(contentProberPortFlag),
 		timeout: c.Int(contentProberTimeoutFlag),
 		input:   c.String(inputFlag),
-		out:     c.String(outputFlag),
+		out:     c.String(OutputFlag),
 	}
 }
 

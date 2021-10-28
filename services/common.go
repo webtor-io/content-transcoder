@@ -4,7 +4,7 @@ import "github.com/urfave/cli"
 
 const (
 	inputFlag          = "input"
-	outputFlag         = "output"
+	OutputFlag         = "output"
 	infoHashFlag       = "info-hash"
 	filePathFlag       = "file-path"
 	originPathFlag     = "origin-path"
@@ -23,7 +23,7 @@ func RegisterCommonFlags(c *cli.App) {
 		Required: true,
 	})
 	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:  outputFlag + ", o",
+		Name:  OutputFlag + ", o",
 		Usage: "output (local path)",
 		Value: "out",
 	})

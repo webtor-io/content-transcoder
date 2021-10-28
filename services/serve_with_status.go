@@ -34,7 +34,7 @@ type ServeWithStatus struct {
 
 func NewServeWithStatus(c *cli.Context, s cs.Servable, eh func(err error)) *ServeWithStatus {
 	return &ServeWithStatus{
-		out:          c.String(outputFlag),
+		out:          c.String(OutputFlag),
 		expire:       time.Duration(c.Int64(statusExpireFlag)) * time.Second,
 		s:            s,
 		endHandler:   eh,
