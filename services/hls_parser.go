@@ -20,15 +20,15 @@ type Rendition struct {
 func (s *Rendition) Rate() uint {
 	h := s.Height
 	if h <= 240 {
-		return 200
+		return 300
 	} else if h <= 360 {
-		return 400
+		return 600
 	} else if h <= 480 {
-		return 800
+		return 1200
 	} else if h <= 720 {
-		return 1600
+		return 2400
 	} else {
-		return 3200
+		return 4800
 	}
 }
 
@@ -141,9 +141,8 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 	}
 	params = append(params,
 		"-i", parsedURL.String(),
-		"-err_detect", "ignore_err",
-		"-reconnect_at_eof", "1",
-		"-reconnect_streamed", "1",
+		// "-err_detect", "ignore_err",
+		// "-reconnect_at_eof", "1",
 		"-seekable", "1",
 	)
 	for _, s := range h.primary {
@@ -196,7 +195,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-vf", fmt.Sprintf("scale=-2:%v", h.r.Height),
 			"-profile:v", "main",
 			// "-crf", "20",
-			// "-preset", "veryslow",
+			"-preset", "veryslow",
 			"-g", "48", "-keyint_min", "48",
 			"-sc_threshold", "0",
 			"-b:v", fmt.Sprintf("%vK", h.r.Rate()),
