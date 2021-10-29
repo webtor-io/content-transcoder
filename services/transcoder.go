@@ -17,7 +17,6 @@ type Transcoder struct {
 	h            *HLSParser
 	out          string
 	ch           chan error
-	finished     bool
 	toCompletion bool
 }
 
@@ -36,9 +35,6 @@ func (s *Transcoder) Close() error {
 	}
 	close(s.ch)
 	return nil
-}
-func (s *Transcoder) IsFinished() bool {
-	return s.finished
 }
 func (s *Transcoder) Serve() (err error) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
@@ -90,7 +86,6 @@ func (s *Transcoder) Serve() (err error) {
 		return errors.Wrap(err, "Failed to transcode")
 	}
 	log.Info("Transcoding finished")
-	s.finished = true
 	if s.toCompletion {
 		return nil
 	}

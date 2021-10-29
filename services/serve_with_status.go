@@ -41,26 +41,26 @@ func NewServeWithStatus(c *cli.Context, s cs.Servable, eh func(err error)) *Serv
 		toCompletion: c.Bool(ToCompletionFlag),
 	}
 }
-func (s *ServeWithStatus) Serve() error {
+func (s *ServeWithStatus) finalize(err error) {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	if err := s.s.Serve(); err != nil {
+	s.endHandler(err)
+	log.Infof("Closing after %v", s.expire)
+	select {
+	case <-sigs:
+	case <-time.After(s.expire):
+	}
+}
+func (s *ServeWithStatus) Serve() (err error) {
+	if err = s.s.Serve(); err != nil {
 		log.WithError(err).Error("Setting error status")
 		os.Create(s.out + "/error")
 		ioutil.WriteFile(s.out+"/error.log", []byte(err.Error()), 0644)
-		s.endHandler(err)
-		select {
-		case <-sigs:
-		case <-time.After(s.expire):
-		}
+		s.finalize(err)
 	} else if s.toCompletion {
 		log.Info("Setting done status")
 		os.Create(s.out + "/done")
-		s.endHandler(nil)
-		select {
-		case <-sigs:
-		case <-time.After(s.expire):
-		}
+		s.finalize(nil)
 	}
-	return nil
+	return err
 }

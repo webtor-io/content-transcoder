@@ -23,19 +23,21 @@ func RegisterSnapshotFlags(c *cli.App) {
 }
 
 type Snapshotter struct {
-	run           bool
-	downloadRatio float64
-	counter       *Counter
-	out           string
-	storage       *S3Storage
-	key           *Key
-	stopCh        chan error
-	transcoder    *Transcoder
-	osf           *OriginalSizeFetcher
-	dsf           *DownloadedSizeFetcher
-	ch            chan error
-	force         bool
-	toCompletion  bool
+	run                bool
+	downloadRatio      float64
+	counter            *Counter
+	out                string
+	storage            *S3Storage
+	key                *Key
+	stopCh             chan error
+	transcoder         *Transcoder
+	osf                *OriginalSizeFetcher
+	dsf                *DownloadedSizeFetcher
+	ch                 chan error
+	force              bool
+	toCompletion       bool
+	transcoderErr      error
+	transcoderFinished bool
 }
 
 func NewSpapshotter(c *cli.Context, co *Counter, st *S3Storage, key *Key, transcoder *Transcoder, osf *OriginalSizeFetcher, dsf *DownloadedSizeFetcher) *Snapshotter {
@@ -69,9 +71,10 @@ func (s *Snapshotter) Serve() error {
 
 	errCh := make(chan error)
 	go func() {
-		err := s.transcoder.Serve()
-		if err != nil {
-			errCh <- err
+		s.transcoderErr = s.transcoder.Serve()
+		s.transcoderFinished = true
+		if s.transcoderErr != nil {
+			errCh <- s.transcoderErr
 			return
 		}
 
@@ -103,8 +106,8 @@ func (s *Snapshotter) snapshot() error {
 				waitCh <- err
 				break
 			}
-			if s.transcoder.IsFinished() {
-				waitCh <- nil
+			if s.transcoderFinished {
+				waitCh <- s.transcoderErr
 				break
 			}
 			<-time.After(10 * time.Second)
@@ -112,6 +115,7 @@ func (s *Snapshotter) snapshot() error {
 	}()
 	err := <-waitCh
 	if err != nil {
+		s.run = false
 		return err
 	}
 	if !s.run {

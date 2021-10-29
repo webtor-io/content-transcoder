@@ -164,6 +164,7 @@ type HLSStream struct {
 	out   string
 	s     *cp.Stream
 	r     *Rendition
+	force bool
 }
 
 func (h *HLSStream) GetPlaylistPath() string {
@@ -189,7 +190,7 @@ func (h *HLSStream) GetCodecParams() []string {
 	params := []string{
 		fmt.Sprintf("-c:%v", h.st),
 	}
-	if h.st == Video && h.r != nil {
+	if h.st == Video && (h.force || h.s.GetCodecName() != "h264") {
 		params = append(
 			params,
 			"h264",
@@ -201,42 +202,6 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-b:v", fmt.Sprintf("%vK", h.r.Rate()),
 			"-maxrate", fmt.Sprintf("%vK", h.r.Rate()),
 			"-bufsize", fmt.Sprintf("%vK", h.r.Rate()),
-		)
-	} else if h.st == Video && h.s.GetHeight() >= 1080 && h.s.GetCodecName() != "h264" {
-		params = append(
-			params,
-			"h264",
-			"-preset", "veryfast",
-			"-b:v", "4.5M",
-			"-maxrate", "4.5M",
-			"-bufsize", "4.5M",
-		)
-	} else if h.st == Video && h.s.GetHeight() >= 720 && h.s.GetCodecName() != "h264" {
-		params = append(
-			params,
-			"h264",
-			"-preset", "veryfast",
-			"-b:v", "3M",
-			"-maxrate", "3M",
-			"-bufsize", "3M",
-		)
-	} else if h.st == Video && h.s.GetHeight() >= 480 && h.s.GetCodecName() != "h264" {
-		params = append(
-			params,
-			"h264",
-			"-preset", "veryfast",
-			"-b:v", "1.5M",
-			"-maxrate", "1.5M",
-			"-bufsize", "1.5M",
-		)
-	} else if h.st == Video && h.s.GetCodecName() != "h264" {
-		params = append(
-			params,
-			"h264",
-			"-preset", "veryfast",
-			"-b:v", "1M",
-			"-maxrate", "1M",
-			"-bufsize", "1M",
 		)
 	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2) {
 		params = append(
@@ -318,13 +283,14 @@ func (h *HLSStream) MakeMasterPlaylist() string {
 	)
 }
 
-func NewHLSStream(index int, st StreamType, out string, s *cp.Stream, r *Rendition) *HLSStream {
+func NewHLSStream(index int, st StreamType, out string, s *cp.Stream, r *Rendition, force bool) *HLSStream {
 	return &HLSStream{
 		index: index,
 		st:    st,
 		out:   out,
 		s:     s,
 		r:     r,
+		force: force,
 	}
 }
 
@@ -343,27 +309,27 @@ func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 	for _, s := range probe.GetStreams() {
 		if s.GetCodecType() == "video" && s.GetCodecName() != "mjpeg" && s.GetCodecName() != "png" && vi < 1 {
 			if sm == Online {
-				h.video = append(h.video, NewHLSStream(vi, Video, out, s, nil))
+				h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{Height: uint(s.GetHeight())}, false))
 			} else if sm == MultiBitrate {
 				var max uint
 				for ri := range DefaultRenditions {
 					if uint(s.GetHeight()) >= DefaultRenditions[ri].Height {
-						h.video = append(h.video, NewHLSStream(vi, Video, out, s, &DefaultRenditions[ri]))
+						h.video = append(h.video, NewHLSStream(vi, Video, out, s, &DefaultRenditions[ri], true))
 						max = DefaultRenditions[ri].Height
 					}
 				}
 				if len(h.video) == 0 || max+100 < uint(s.GetHeight()) {
 					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{
 						Height: uint(s.GetHeight()),
-					}))
+					}, true))
 				}
 			}
 			vi++
 		} else if s.GetCodecType() == "audio" {
-			h.audio = append(h.audio, NewHLSStream(ai, Audio, out, s, nil))
+			h.audio = append(h.audio, NewHLSStream(ai, Audio, out, s, nil, false))
 			ai++
 		} else if s.GetCodecType() == "subtitle" && s.GetCodecName() != "hdmv_pgs_subtitle" {
-			h.subs = append(h.subs, NewHLSStream(si, Subtitle, out, s, nil))
+			h.subs = append(h.subs, NewHLSStream(si, Subtitle, out, s, nil, false))
 			si++
 		}
 	}
