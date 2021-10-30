@@ -20,15 +20,15 @@ type Rendition struct {
 func (s *Rendition) Rate() uint {
 	h := s.Height
 	if h <= 240 {
-		return 300
+		return 400
 	} else if h <= 360 {
-		return 600
+		return 800
 	} else if h <= 480 {
-		return 1200
+		return 1600
 	} else if h <= 720 {
-		return 2400
+		return 3200
 	} else {
-		return 4800
+		return 6400
 	}
 }
 
