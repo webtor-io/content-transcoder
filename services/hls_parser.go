@@ -29,6 +29,7 @@ func (s *Rendition) adaptRate(h uint, hl uint, hh uint, bl uint, bh uint) uint {
 
 }
 
+// https://support.google.com/youtube/answer/1722171?hl=en#zippy=%2Cbitrate
 var DefaultRenditions = []Rendition{
 	{
 		Height:  240,
@@ -40,15 +41,15 @@ var DefaultRenditions = []Rendition{
 	},
 	{
 		Height:  480,
-		DefRate: 2000,
+		DefRate: 2500,
 	},
 	{
 		Height:  720,
-		DefRate: 4000,
+		DefRate: 5000,
 	},
 	{
 		Height:  1080,
-		DefRate: 7000,
+		DefRate: 8000,
 	},
 }
 
