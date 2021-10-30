@@ -35,7 +35,6 @@ func run(c *cli.Context) (err error) {
 	if err != nil {
 		return errors.Wrapf(err, "Failed create %v", fmt.Sprintf("%v/%v", c.String(s.OutputFlag), "output.log"))
 	}
-	defer outLog.Close()
 	log.SetOutput(io.MultiWriter(os.Stdout, outLog))
 
 	// Setting ContentProbe

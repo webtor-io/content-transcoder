@@ -14,40 +14,56 @@ import (
 )
 
 type Rendition struct {
-	Height uint
+	Height  uint
+	DefRate uint
 }
 
-func (s *Rendition) Rate() uint {
-	h := s.Height
-	if h <= 240 {
-		return 400
-	} else if h <= 360 {
-		return 800
-	} else if h <= 480 {
-		return 1600
-	} else if h <= 720 {
-		return 3200
-	} else {
-		return 6400
+func (s *Rendition) adaptRate(h uint, hl uint, hh uint, bl uint, bh uint) uint {
+	if h == hl {
+		return bl
 	}
+	if h == hh {
+		return bh
+	}
+	return uint(float64(h-hl)/float64(hh-hl)*float64(bh-bl)) + bl
+
 }
 
 var DefaultRenditions = []Rendition{
 	{
-		Height: 240,
+		Height:  240,
+		DefRate: 500,
 	},
 	{
-		Height: 360,
+		Height:  360,
+		DefRate: 1000,
 	},
 	{
-		Height: 480,
+		Height:  480,
+		DefRate: 2000,
 	},
 	{
-		Height: 720,
+		Height:  720,
+		DefRate: 4000,
 	},
 	{
-		Height: 1080,
+		Height:  1080,
+		DefRate: 7000,
 	},
+}
+
+func (s *Rendition) Rate() uint {
+	h := s.Height
+	for ri := range DefaultRenditions {
+		if h <= DefaultRenditions[ri].Height {
+			var hl, bl uint
+			if ri != 0 {
+				hl, bl = DefaultRenditions[ri-1].Height, DefaultRenditions[ri-1].DefRate
+			}
+			return s.adaptRate(h, hl, DefaultRenditions[ri].Height, bl, DefaultRenditions[ri].DefRate)
+		}
+	}
+	return DefaultRenditions[len(DefaultRenditions)-1].DefRate
 }
 
 type StreamMode int
@@ -294,6 +310,20 @@ func NewHLSStream(index int, st StreamType, out string, s *cp.Stream, r *Renditi
 	}
 }
 
+func (s *HLS) getRenditions(height uint) []Rendition {
+	rs := []Rendition{}
+	for ri := range DefaultRenditions {
+		if height >= DefaultRenditions[ri].Height {
+			rs = append(rs, DefaultRenditions[ri])
+		}
+	}
+	if rs[len(rs)-1].Height < height {
+		rs = rs[:len(rs)-1]
+		rs = append(rs, Rendition{Height: height})
+	}
+	return rs
+}
+
 func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 	h := &HLS{
 		in:    in,
@@ -311,14 +341,13 @@ func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 			if sm == Online {
 				h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{Height: uint(s.GetHeight())}, false))
 			} else if sm == MultiBitrate {
-				var max uint
-				for ri := range DefaultRenditions {
-					if uint(s.GetHeight()) >= DefaultRenditions[ri].Height {
-						h.video = append(h.video, NewHLSStream(vi, Video, out, s, &DefaultRenditions[ri], true))
-						max = DefaultRenditions[ri].Height
+				rs := h.getRenditions(uint(s.GetHeight()))
+				for ri := range rs {
+					if uint(s.GetHeight()) >= rs[ri].Height {
+						h.video = append(h.video, NewHLSStream(vi, Video, out, s, &rs[ri], true))
 					}
 				}
-				if len(h.video) == 0 || max+100 < uint(s.GetHeight()) {
+				if len(h.video) == 0 {
 					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{
 						Height: uint(s.GetHeight()),
 					}, true))
