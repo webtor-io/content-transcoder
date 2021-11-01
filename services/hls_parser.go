@@ -312,6 +312,9 @@ func NewHLSStream(index int, st StreamType, out string, s *cp.Stream, r *Renditi
 }
 
 func (s *HLS) getRenditions(height uint) []Rendition {
+	if height > DefaultRenditions[len(DefaultRenditions)-1].Height {
+		height = DefaultRenditions[len(DefaultRenditions)-1].Height
+	}
 	rs := []Rendition{}
 	for ri := range DefaultRenditions {
 		if height >= DefaultRenditions[ri].Height {
