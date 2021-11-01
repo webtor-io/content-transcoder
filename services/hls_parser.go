@@ -14,8 +14,9 @@ import (
 )
 
 type Rendition struct {
-	Height  uint
-	DefRate uint
+	Height   uint
+	DefRate  uint
+	Required bool
 }
 
 func (s *Rendition) adaptRate(h uint, hl uint, hh uint, bl uint, bh uint) uint {
@@ -32,12 +33,14 @@ func (s *Rendition) adaptRate(h uint, hl uint, hh uint, bl uint, bh uint) uint {
 // https://support.google.com/youtube/answer/1722171?hl=en#zippy=%2Cbitrate
 var DefaultRenditions = []Rendition{
 	{
-		Height:  240,
-		DefRate: 500,
+		Height:   240,
+		DefRate:  500,
+		Required: true,
 	},
 	{
-		Height:  360,
-		DefRate: 1000,
+		Height:   360,
+		DefRate:  1000,
+		Required: true,
 	},
 	{
 		Height:  480,
@@ -322,7 +325,9 @@ func (s *HLS) getRenditions(height uint) []Rendition {
 		}
 	}
 	if rs[len(rs)-1].Height < height {
-		rs = rs[:len(rs)-1]
+		if !rs[len(rs)-1].Required {
+			rs = rs[:len(rs)-1]
+		}
 		rs = append(rs, Rendition{Height: height})
 	}
 	return rs
