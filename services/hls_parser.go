@@ -314,6 +314,15 @@ func NewHLSStream(index int, st StreamType, out string, s *cp.Stream, r *Renditi
 	}
 }
 
+func (s *HLS) getNextRendition(height uint) *Rendition {
+	for ri := range DefaultRenditions {
+		if height < DefaultRenditions[ri].Height {
+			return &DefaultRenditions[ri]
+		}
+	}
+	return nil
+}
+
 func (s *HLS) getRenditions(height uint) []Rendition {
 	if height > DefaultRenditions[len(DefaultRenditions)-1].Height {
 		height = DefaultRenditions[len(DefaultRenditions)-1].Height
@@ -325,7 +334,8 @@ func (s *HLS) getRenditions(height uint) []Rendition {
 		}
 	}
 	if rs[len(rs)-1].Height < height {
-		if !rs[len(rs)-1].Required {
+		ex := float64(height-rs[len(rs)-1].Height) / float64(s.getNextRendition(height).Height-rs[len(rs)-1].Height)
+		if !rs[len(rs)-1].Required && ex < 0.3 {
 			rs = rs[:len(rs)-1]
 		}
 		rs = append(rs, Rendition{Height: height})
@@ -352,9 +362,7 @@ func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 			} else if sm == MultiBitrate {
 				rs := h.getRenditions(uint(s.GetHeight()))
 				for ri := range rs {
-					if uint(s.GetHeight()) >= rs[ri].Height {
-						h.video = append(h.video, NewHLSStream(vi, Video, out, s, &rs[ri], true))
-					}
+					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &rs[ri], true))
 				}
 				if len(h.video) == 0 {
 					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{
