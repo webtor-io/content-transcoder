@@ -218,10 +218,11 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-profile:v", "high",
 			"-preset", "veryfast",
 			"-g", "48", "-keyint_min", "48",
+			"-crf", "20",
 			"-sc_threshold", "0",
 			"-b:v", fmt.Sprintf("%vK", h.r.Rate()),
-			"-maxrate", fmt.Sprintf("%vK", h.r.Rate()),
-			"-bufsize", fmt.Sprintf("%vK", h.r.Rate()),
+			"-maxrate", fmt.Sprintf("%vK", uint(float64(h.r.Rate())*1.3)),
+			"-bufsize", fmt.Sprintf("%vK", uint(float64(h.r.Rate())*1.5)),
 		)
 	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2) {
 		params = append(
