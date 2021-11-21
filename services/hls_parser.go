@@ -147,7 +147,7 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to parse url")
 	}
-	if h.sm == Online && h.primary[0].s.GetCodecType() == "video" {
+	if h.primary[0].s.GetCodecType() == "video" {
 		// if h.primary.s.GetCodecName() == "hevc" {
 		// 	return nil, errors.Errorf("hevc codec is not supported")
 		// }
@@ -156,9 +156,9 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 		}
 	}
 	params := []string{}
-	if h.sm == Online {
-		params = append(params, "-re")
-	}
+	// if h.sm == Online {
+	// 	params = append(params, "-re")
+	// }
 	params = append(params,
 		"-i", parsedURL.String(),
 		// "-err_detect", "ignore_err",
