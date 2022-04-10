@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	downloadedSizeTTL       = 10
-	downloadedSizeStoreDiff = 1_000_000
+	downloadedSizeTTL       = 60
+	downloadedSizeStoreDiff = 10_000_000
 )
 
 type DownloadedSizePool struct {
