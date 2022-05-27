@@ -215,7 +215,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			params,
 			"h264",
 			"-vf", fmt.Sprintf("scale=-2:%v", h.r.Height),
-			"-profile:v", "high",
+			"-profile:v", "main",
 			"-preset", "veryfast",
 			"-g", "48", "-keyint_min", "48",
 			"-crf", "20",
