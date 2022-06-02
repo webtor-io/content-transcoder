@@ -404,7 +404,7 @@ func (s *HLS) MakeMasterPlaylist() error {
 		if p.r != nil {
 			rate = p.r.Rate() * 1000
 		}
-		res.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=%v,CODECS=\"avc1.42e00a,mp4a.40.2\"", rate))
+		res.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=%v", rate))
 		if len(s.audio) > 0 {
 			res.WriteString(`,AUDIO="audio"`)
 		}
