@@ -13,7 +13,7 @@ import (
 
 var (
 	re        = regexp.MustCompile(`\.m3u8$`)
-	re2       = regexp.MustCompile(`[asv][0-9]+(\-[0-9]+)?\.[0-9a-z]{2,4}`)
+	re2       = regexp.MustCompile(`[asv][0-9]+(\-[0-9]+)?(\-[0-9]+)?\.[0-9a-z]{2,4}`)
 	re3       = regexp.MustCompile(`(ts|vtt|\,)$`)
 	playlists sync.Map
 )
