@@ -61,10 +61,10 @@ func (s *Snapshotter) Serve() error {
 	if !s.force {
 		ok, err := s.storage.CheckDoneMarker(context.Background(), s.key.Get())
 		if err != nil {
-			return errors.Wrapf(err, "Failed to check done marker")
+			return errors.Wrapf(err, "failed to check done marker")
 		}
 		if ok {
-			log.Info("Content is already transcoded")
+			log.Info("content is already transcoded")
 			return nil
 		}
 	}
@@ -125,12 +125,12 @@ func (s *Snapshotter) snapshot() error {
 		s.run = false
 		close(s.stopCh)
 	}()
-	log.Info("Staring to build snapshot")
+	log.Info("staring to build snapshot")
 	err = s.storage.Upload(context.Background(), s.key.Get(), s.out)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to make snapshot")
+		return errors.Wrapf(err, "failed to make snapshot")
 	}
-	log.Info("Snapshot finished")
+	log.Info("snapshot finished")
 	return nil
 }
 
@@ -142,19 +142,19 @@ func (s *Snapshotter) shouldRun() (bool, error) {
 	// return false, nil
 	os, err := s.osf.Fetch()
 	if err != nil {
-		return false, errors.Wrapf(err, "Failed to fetch original size")
+		return false, errors.Wrapf(err, "failed to fetch original size")
 	}
 	ds, err := s.dsf.Fetch()
 	if err != nil {
-		return false, errors.Wrapf(err, "Failed to fetch downloaded size")
+		return false, errors.Wrapf(err, "failed to fetch downloaded size")
 	}
 	return float64(s.counter.Count()+ds)/float64(os) > s.downloadRatio, nil
 }
 
 func (s *Snapshotter) Close() {
-	log.Info("Closing Snapshotter")
+	log.Info("closing Snapshotter")
 	defer func() {
-		log.Info("Snapshotter closed")
+		log.Info("snapshotter closed")
 	}()
 	if !s.run {
 		close(s.ch)

@@ -29,8 +29,9 @@ func RegisterWebFlags(c *cli.App) {
 		EnvVar: "PORT",
 	})
 	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:  webPlayerFlag,
-		Usage: "player",
+		Name:   webPlayerFlag,
+		Usage:  "player",
+		EnvVar: "PLAYER",
 	})
 }
 
