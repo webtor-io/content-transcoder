@@ -18,9 +18,10 @@ const (
 
 func RegisterCommonFlags(f []cli.Flag) []cli.Flag {
 	return append(f, cli.StringFlag{
-		Name:  OutputFlag + ", o",
-		Usage: "output (local path)",
-		Value: "out",
+		Name:   OutputFlag + ", o",
+		Usage:  "output (local path)",
+		Value:  "out",
+		EnvVar: "OUTPUT",
 	})
 }
 
