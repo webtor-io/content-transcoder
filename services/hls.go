@@ -2,15 +2,11 @@ package services
 
 import (
 	"fmt"
-	"io/ioutil"
-	u "net/url"
-	"strings"
-	"sync"
-
 	"github.com/pkg/errors"
-	"github.com/urfave/cli"
-
 	cp "github.com/webtor-io/content-prober/content-prober"
+	u "net/url"
+	"os"
+	"strings"
 )
 
 type Rendition struct {
@@ -77,52 +73,6 @@ const (
 	MultiBitrate StreamMode = 1
 )
 
-type HLSParser struct {
-	in     string
-	out    string
-	probe  *ContentProbe
-	r      *HLS
-	err    error
-	inited bool
-	mux    sync.Mutex
-	sm     StreamMode
-}
-
-func NewHLSParser(c *cli.Context, pr *ContentProbe) *HLSParser {
-	sms := c.String(StreamModeFlag)
-	sm := Online
-	if sms == "multibitrate" {
-		sm = MultiBitrate
-	}
-	return &HLSParser{
-		in:    c.String(inputFlag),
-		out:   c.String(OutputFlag),
-		probe: pr,
-		sm:    sm,
-	}
-}
-
-func (s *HLSParser) Get() (*HLS, error) {
-	s.mux.Lock()
-	defer s.mux.Unlock()
-	if s.inited {
-		return s.r, s.err
-	}
-	s.r, s.err = s.get()
-	s.inited = true
-	return s.r, s.err
-}
-
-func (s *HLSParser) get() (*HLS, error) {
-	pr, err := s.probe.Get()
-
-	if err != nil {
-		return nil, errors.Wrap(err, "Failed to get probe")
-	}
-
-	return NewHLS(s.in, s.out, pr, s.sm), nil
-}
-
 type StreamType string
 
 const (
@@ -133,7 +83,6 @@ const (
 
 type HLS struct {
 	in      string
-	out     string
 	primary []*HLSStream
 	video   []*HLSStream
 	audio   []*HLSStream
@@ -141,7 +90,7 @@ type HLS struct {
 	sm      StreamMode
 }
 
-func (h *HLS) GetFFmpegParams() ([]string, error) {
+func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 
 	parsedURL, err := u.Parse(h.in)
 	if err != nil {
@@ -167,13 +116,13 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 		"-seekable", "1",
 	)
 	for _, s := range h.primary {
-		params = append(params, s.GetFFmpegParams()...)
+		params = append(params, s.GetFFmpegParams(out)...)
 	}
 	for _, s := range h.audio {
-		params = append(params, s.GetFFmpegParams()...)
+		params = append(params, s.GetFFmpegParams(out)...)
 	}
 	for _, s := range h.subs {
-		params = append(params, s.GetFFmpegParams()...)
+		params = append(params, s.GetFFmpegParams(out)...)
 	}
 	return params, nil
 }
@@ -181,14 +130,13 @@ func (h *HLS) GetFFmpegParams() ([]string, error) {
 type HLSStream struct {
 	index int
 	st    StreamType
-	out   string
 	s     *cp.Stream
 	r     *Rendition
 	force bool
 }
 
-func (h *HLSStream) GetPlaylistPath() string {
-	return fmt.Sprintf("%v/%v", h.out, h.GetPlaylistName())
+func (h *HLSStream) GetPlaylistPath(out string) string {
+	return fmt.Sprintf("%v/%v", out, h.GetPlaylistName())
 }
 
 func (h *HLSStream) GetPlaylistName() string {
@@ -238,23 +186,23 @@ func (h *HLSStream) GetCodecParams() []string {
 	return params
 }
 
-func (h *HLSStream) GetFFmpegParams() []string {
+func (h *HLSStream) GetFFmpegParams(out string) []string {
 
 	params := []string{
 		"-map", fmt.Sprintf("0:%v:%v", h.st, h.index),
 		"-f", "segment",
 		"-segment_time", "4",
 		"-segment_list_type", "hls",
-		"-segment_list", h.GetPlaylistPath(),
+		"-segment_list", h.GetPlaylistPath(out),
 		"-muxdelay", "0",
 		"-segment_format", h.GetSegmentFormat(),
 	}
 
 	params = append(params, h.GetCodecParams()...)
 	if h.r != nil {
-		params = append(params, fmt.Sprintf("%v/%v%v-%v-%%d.%v", h.out, h.st, h.index, h.r.Height, h.GetSegmentExtension()))
+		params = append(params, fmt.Sprintf("%v/%v%v-%v-%%d.%v", out, h.st, h.index, h.r.Height, h.GetSegmentExtension()))
 	} else {
-		params = append(params, fmt.Sprintf("%v/%v%v-%%d.%v", h.out, h.st, h.index, h.GetSegmentExtension()))
+		params = append(params, fmt.Sprintf("%v/%v%v-%%d.%v", out, h.st, h.index, h.GetSegmentExtension()))
 	}
 
 	return params
@@ -304,11 +252,10 @@ func (h *HLSStream) MakeMasterPlaylist() string {
 	)
 }
 
-func NewHLSStream(index int, st StreamType, out string, s *cp.Stream, r *Rendition, force bool) *HLSStream {
+func NewHLSStream(index int, st StreamType, s *cp.Stream, r *Rendition, force bool) *HLSStream {
 	return &HLSStream{
 		index: index,
 		st:    st,
-		out:   out,
 		s:     s,
 		r:     r,
 		force: force,
@@ -344,10 +291,9 @@ func (s *HLS) getRenditions(height uint) []Rendition {
 	return rs
 }
 
-func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
+func NewHLS(in string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 	h := &HLS{
 		in:    in,
-		out:   out,
 		video: []*HLSStream{},
 		audio: []*HLSStream{},
 		subs:  []*HLSStream{},
@@ -359,24 +305,24 @@ func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 	for _, s := range probe.GetStreams() {
 		if s.GetCodecType() == "video" && s.GetCodecName() != "mjpeg" && s.GetCodecName() != "png" && vi < 1 {
 			if sm == Online {
-				h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{Height: uint(s.GetHeight())}, false))
+				h.video = append(h.video, NewHLSStream(vi, Video, s, &Rendition{Height: uint(s.GetHeight())}, false))
 			} else if sm == MultiBitrate {
 				rs := h.getRenditions(uint(s.GetHeight()))
 				for ri := range rs {
-					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &rs[ri], true))
+					h.video = append(h.video, NewHLSStream(vi, Video, s, &rs[ri], true))
 				}
 				if len(h.video) == 0 {
-					h.video = append(h.video, NewHLSStream(vi, Video, out, s, &Rendition{
+					h.video = append(h.video, NewHLSStream(vi, Video, s, &Rendition{
 						Height: uint(s.GetHeight()),
 					}, true))
 				}
 			}
 			vi++
 		} else if s.GetCodecType() == "audio" {
-			h.audio = append(h.audio, NewHLSStream(ai, Audio, out, s, nil, false))
+			h.audio = append(h.audio, NewHLSStream(ai, Audio, s, nil, false))
 			ai++
 		} else if s.GetCodecType() == "subtitle" && s.GetCodecName() != "hdmv_pgs_subtitle" {
-			h.subs = append(h.subs, NewHLSStream(si, Subtitle, out, s, nil, false))
+			h.subs = append(h.subs, NewHLSStream(si, Subtitle, s, nil, false))
 			si++
 		}
 	}
@@ -390,7 +336,7 @@ func NewHLS(in string, out string, probe *cp.ProbeReply, sm StreamMode) *HLS {
 	return h
 }
 
-func (s *HLS) MakeMasterPlaylist() error {
+func (s *HLS) MakeMasterPlaylist(out string) error {
 	var res strings.Builder
 	res.WriteString("#EXTM3U\n")
 	for _, a := range s.audio {
@@ -415,5 +361,5 @@ func (s *HLS) MakeMasterPlaylist() error {
 		res.WriteString(p.GetPlaylistName())
 		res.WriteRune('\n')
 	}
-	return ioutil.WriteFile(s.out+"/index.m3u8", []byte(res.String()), 0644)
+	return os.WriteFile(out+"/index.m3u8", []byte(res.String()), 0644)
 }

@@ -16,7 +16,7 @@
     <div class="container">
         <h1>Video.js</h1>
         <video id='hls-example' class="video-js vjs-default-skin" controls crossorigin="anonymous">
-            <source type="application/x-mpegURL" src="/index.m3u8">
+            <source type="application/x-mpegURL" src="/index.m3u8?source_url={{ .SourceURL }}" />
         </video>
     </div>
     <script src="https://unpkg.com/videojs-contrib-hls/dist/videojs-contrib-hls.js"></script>

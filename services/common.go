@@ -1,65 +1,74 @@
 package services
 
-import "github.com/urfave/cli"
-
-const (
-	inputFlag          = "input"
-	OutputFlag         = "output"
-	infoHashFlag       = "info-hash"
-	filePathFlag       = "file-path"
-	originPathFlag     = "origin-path"
-	UseSnapshotFlag    = "use-snapshot"
-	StreamModeFlag     = "stream-mode"
-	KeyPrefixFlag      = "key-prefix"
-	ToCompletionFlag   = "to-completion"
-	forceTranscodeFlag = "force-trancode"
+import (
+	"crypto/sha1"
+	"fmt"
+	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+	"os"
+	"path"
+	"sort"
+	"strconv"
+	"strings"
 )
 
-func RegisterCommonFlags(c *cli.App) {
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:     inputFlag + ", i, url",
-		Usage:    "input (url)",
-		EnvVar:   "INPUT, SOURCE_URL, URL",
-		Required: true,
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
+const (
+	OutputFlag = "output"
+)
+
+func RegisterCommonFlags(f []cli.Flag) []cli.Flag {
+	return append(f, cli.StringFlag{
 		Name:  OutputFlag + ", o",
 		Usage: "output (local path)",
 		Value: "out",
 	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   StreamModeFlag + ", sm",
-		Usage:  "stream mode (online, multibitrate)",
-		Value:  "online",
-		EnvVar: "STREAM_MODE",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   infoHashFlag,
-		EnvVar: "INFO_HASH",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   filePathFlag,
-		EnvVar: "FILE_PATH",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   originPathFlag,
-		EnvVar: "ORIGIN_PATH",
-	})
-	c.Flags = append(c.Flags, cli.StringFlag{
-		Name:   KeyPrefixFlag,
-		Value:  "transcoder",
-		EnvVar: "KEY_PREFIX",
-	})
-	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   UseSnapshotFlag,
-		EnvVar: "USE_SNAPSHOT",
-	})
-	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   ToCompletionFlag,
-		EnvVar: "TO_COMPLETION",
-	})
-	c.Flags = append(c.Flags, cli.BoolFlag{
-		Name:   forceTranscodeFlag,
-		EnvVar: "FORCE_TRANSCODE",
-	})
+}
+
+func DistributeByHash(dirs []string, hash string) (string, error) {
+	sort.Strings(dirs)
+	hex := fmt.Sprintf("%x", sha1.Sum([]byte(hash)))[0:5]
+	num64, err := strconv.ParseInt(hex, 16, 64)
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to parse hex from hex=%v infohash=%v", hex, hash)
+	}
+	num := int(num64 * 1000)
+	total := 1048575 * 1000
+	interval := total / len(dirs)
+	for i := 0; i < len(dirs); i++ {
+		if num < (i+1)*interval {
+			return dirs[i], nil
+		}
+	}
+	return "", errors.Wrapf(err, "failed to distribute infohash=%v", hash)
+}
+
+func GetDir(location string, hash string) (string, error) {
+	if strings.HasSuffix(location, "*") {
+		prefix := strings.TrimSuffix(location, "*")
+		dir, lp := path.Split(prefix)
+
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			return "", err
+		}
+		dirs := []string{}
+		for _, f := range files {
+			if f.IsDir() && strings.HasPrefix(f.Name(), lp) {
+				dirs = append(dirs, f.Name())
+			}
+		}
+		if len(dirs) == 0 {
+			return prefix + string(os.PathSeparator) + hash, nil
+		} else if len(dirs) == 1 {
+			return dir + dirs[0] + string(os.PathSeparator) + hash, nil
+		} else {
+			d, err := DistributeByHash(dirs, hash)
+			if err != nil {
+				return "", err
+			}
+			return dir + d + string(os.PathSeparator) + hash, nil
+		}
+	} else {
+		return location + "/" + hash, nil
+	}
 }

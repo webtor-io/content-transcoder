@@ -8,20 +8,14 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 )
 
 var (
-	re        = regexp.MustCompile(`\.m3u8$`)
-	re2       = regexp.MustCompile(`[asv][0-9]+(\-[0-9]+)?(\-[0-9]+)?\.[0-9a-z]{2,4}`)
-	re3       = regexp.MustCompile(`(ts|vtt|\,)$`)
-	playlists sync.Map
+	re2 = regexp.MustCompile(`[asv][0-9]+(\-[0-9]+)?(\-[0-9]+)?\.[0-9a-z]{2,4}`)
+	re3 = regexp.MustCompile(`(ts|vtt|\,)$`)
 )
 
-func validatePlaylist(b []byte, r *http.Request) bool {
-	if r.URL.Path == "/index.m3u8" {
-		return true
-	}
+func validatePlaylist(b []byte) bool {
 	scanner := bufio.NewScanner(bytes.NewReader(b))
 	i := 0
 	for scanner.Scan() {
@@ -64,11 +58,12 @@ func enrichPlaylist(b []byte, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func enrichPlaylistHandler(h http.Handler) http.Handler {
+func enrichPlaylistHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if !re.MatchString(p) {
-			h.ServeHTTP(w, r)
+
+		if !strings.HasSuffix(r.URL.Path, ".m3u8") {
+			next.ServeHTTP(w, r)
 			return
 		}
 
@@ -76,7 +71,7 @@ func enrichPlaylistHandler(h http.Handler) http.Handler {
 
 		r.Header.Del("Range")
 
-		h.ServeHTTP(wi, r)
+		next.ServeHTTP(wi, r)
 
 		if wi.statusCode != http.StatusOK {
 			w.WriteHeader(wi.statusCode)
@@ -85,15 +80,9 @@ func enrichPlaylistHandler(h http.Handler) http.Handler {
 
 		b := wi.GetBufferedBytes()
 
-		if !validatePlaylist(b, r) {
-			s, ok := playlists.Load(p)
-			if ok {
-				enrichPlaylist([]byte(s.(string)), w, r)
-			} else {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
+		if p != "/index.m3u8" && !validatePlaylist(b) {
+			w.WriteHeader(http.StatusInternalServerError)
 		} else {
-			playlists.Store(p, string(b))
 			enrichPlaylist(b, w, r)
 		}
 	})

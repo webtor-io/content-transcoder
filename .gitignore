@@ -19,3 +19,4 @@ out/*
 content-transcoder
 
 .DS_Store
+.env
