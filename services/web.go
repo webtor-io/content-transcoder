@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -175,13 +176,21 @@ func setContextHandler(next http.Handler, output string) http.Handler {
 		h := sha1.New()
 		sourceURL := getSourceURL(r)
 		if sourceURL == "" {
+			log.Error("empty source url")
 			http.Error(w, "empty source url", http.StatusBadRequest)
 			return
 		}
-		h.Write([]byte(sourceURL))
+		u, err := url.Parse(sourceURL)
+		if err != nil {
+			log.WithError(err).WithField("source_url", sourceURL).Error("unable to parse source url")
+			http.Error(w, "failed to parse source url", http.StatusInternalServerError)
+			return
+		}
+		h.Write([]byte(u.Path))
 		hash := hex.EncodeToString(h.Sum(nil))
 		dir, err := GetDir(output, hash)
 		if err != nil {
+			log.WithError(err).WithField("hash", hash).Error("unable to get dir")
 			http.Error(w, "failed to get output dir", http.StatusInternalServerError)
 			return
 		}
