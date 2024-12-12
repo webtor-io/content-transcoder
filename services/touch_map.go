@@ -8,24 +8,24 @@ import (
 )
 
 type TouchMap struct {
-	lazymap.LazyMap
+	lazymap.LazyMap[bool]
 }
 
 func NewTouchMap() *TouchMap {
 	return &TouchMap{
-		LazyMap: lazymap.New(&lazymap.Config{
+		LazyMap: lazymap.New[bool](&lazymap.Config{
 			Expire: 30 * time.Second,
 		}),
 	}
 }
 
-func (s *TouchMap) touch(path string) error {
+func (s *TouchMap) touch(path string) (bool, error) {
 	f := path + ".touch"
 	_, err := os.Stat(f)
 	if os.IsNotExist(err) {
 		file, err := os.Create(f)
 		if err != nil {
-			return err
+			return false, err
 		}
 		defer func(file *os.File) {
 			_ = file.Close()
@@ -34,16 +34,14 @@ func (s *TouchMap) touch(path string) error {
 		currentTime := time.Now().Local()
 		err = os.Chtimes(f, currentTime, currentTime)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return true, nil
 }
 
-func (s *TouchMap) Touch(path string) error {
-	_, err := s.LazyMap.Get(path, func() (interface{}, error) {
-		err := s.touch(path)
-		return nil, err
+func (s *TouchMap) Touch(path string) (bool, error) {
+	return s.LazyMap.Get(path, func() (bool, error) {
+		return s.touch(path)
 	})
-	return err
 }

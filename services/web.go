@@ -247,7 +247,7 @@ func (s *Web) waitHandler(next http.Handler) http.Handler {
 func (s *Web) touchHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out := r.Context().Value(OutputDirContext).(string)
-		_ = s.touchMap.Touch(out)
+		_, _ = s.touchMap.Touch(out)
 		next.ServeHTTP(w, r)
 	})
 }

@@ -45,7 +45,7 @@ func RegisterContentProberFlags(f []cli.Flag) []cli.Flag {
 }
 
 type ContentProbe struct {
-	lazymap.LazyMap
+	lazymap.LazyMap[*cp.ProbeReply]
 	host    string
 	port    int
 	timeout int
@@ -56,7 +56,7 @@ func NewContentProbe(c *cli.Context) *ContentProbe {
 		host:    c.String(contentProberHostFlag),
 		port:    c.Int(contentProberPortFlag),
 		timeout: c.Int(contentProberTimeoutFlag),
-		LazyMap: lazymap.New(&lazymap.Config{
+		LazyMap: lazymap.New[*cp.ProbeReply](&lazymap.Config{
 			Expire:      30 * time.Minute,
 			ErrorExpire: 10 * time.Second,
 		}),
@@ -64,10 +64,9 @@ func NewContentProbe(c *cli.Context) *ContentProbe {
 }
 
 func (s *ContentProbe) Get(input string, out string) (*cp.ProbeReply, error) {
-	pr, err := s.LazyMap.Get(input+out, func() (interface{}, error) {
+	return s.LazyMap.Get(input+out, func() (*cp.ProbeReply, error) {
 		return s.get(input, out)
 	})
-	return pr.(*cp.ProbeReply), err
 }
 
 func (s *ContentProbe) get(input string, out string) (pr *cp.ProbeReply, err error) {
