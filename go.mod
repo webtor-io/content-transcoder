@@ -13,7 +13,7 @@ require (
 	google.golang.org/grpc v1.27.0
 )
 
-require github.com/webtor-io/lazymap v0.0.0-20221030185154-1799721becef
+require github.com/webtor-io/lazymap v0.0.0-20241211155941-e81d935cfa1d
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
