@@ -28,7 +28,7 @@ COPY --from=build /app/player ./player
 ENV OUTPUT=/data
 
 # tell we are exposing our service
-EXPOSE 8080 8081 8082
+EXPOSE 8080 8081 8082 8083
 
 ENTRYPOINT []
 
