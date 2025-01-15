@@ -3,11 +3,25 @@ package services
 import (
 	"fmt"
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
 	cp "github.com/webtor-io/content-prober/content-prober"
 	u "net/url"
 	"os"
 	"strings"
 )
+
+const (
+	HLSAACCodecFlag = "hls-aac-codec"
+)
+
+func RegisterHLSFlags(f []cli.Flag) []cli.Flag {
+	return append(f, cli.StringFlag{
+		Name:   HLSAACCodecFlag,
+		Usage:  "specify the hls aac codec",
+		EnvVar: "HLS_AAC_CODEC",
+		Value:  "libfdk_aac",
+	})
+}
 
 type Rendition struct {
 	Height   uint
@@ -87,7 +101,7 @@ type HLS struct {
 	video   []*HLSStream
 	audio   []*HLSStream
 	subs    []*HLSStream
-	sm      StreamMode
+	cfg     *HLSConfig
 }
 
 func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
@@ -133,6 +147,7 @@ type HLSStream struct {
 	s     *cp.Stream
 	r     *Rendition
 	force bool
+	cfg   *HLSConfig
 }
 
 func (h *HLSStream) GetPlaylistPath(out string) string {
@@ -175,7 +190,7 @@ func (h *HLSStream) GetCodecParams() []string {
 	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2) {
 		params = append(
 			params,
-			"libfdk_aac",
+			h.cfg.aacCodec,
 			"-ac", "2",
 		)
 	} else if h.st == Subtitle && h.s.GetCodecName() != "webvtt" {
@@ -252,12 +267,13 @@ func (h *HLSStream) MakeMasterPlaylist() string {
 	)
 }
 
-func NewHLSStream(index int, st StreamType, s *cp.Stream, r *Rendition, force bool) *HLSStream {
+func NewHLSStream(index int, st StreamType, s *cp.Stream, r *Rendition, cfg *HLSConfig, force bool) *HLSStream {
 	return &HLSStream{
 		index: index,
 		st:    st,
 		s:     s,
 		r:     r,
+		cfg:   cfg,
 		force: force,
 	}
 }
@@ -291,38 +307,38 @@ func (s *HLS) getRenditions(height uint) []Rendition {
 	return rs
 }
 
-func NewHLS(in string, probe *cp.ProbeReply, sm StreamMode) *HLS {
+func NewHLS(in string, probe *cp.ProbeReply, cfg *HLSConfig) *HLS {
 	h := &HLS{
 		in:    in,
 		video: []*HLSStream{},
 		audio: []*HLSStream{},
 		subs:  []*HLSStream{},
-		sm:    sm,
+		cfg:   cfg,
 	}
 	vi := 0
 	ai := 0
 	si := 0
 	for _, s := range probe.GetStreams() {
 		if s.GetCodecType() == "video" && s.GetCodecName() != "mjpeg" && s.GetCodecName() != "png" && vi < 1 {
-			if sm == Online {
-				h.video = append(h.video, NewHLSStream(vi, Video, s, &Rendition{Height: uint(s.GetHeight())}, false))
-			} else if sm == MultiBitrate {
+			if cfg.sm == Online {
+				h.video = append(h.video, NewHLSStream(vi, Video, s, &Rendition{Height: uint(s.GetHeight())}, cfg, false))
+			} else if cfg.sm == MultiBitrate {
 				rs := h.getRenditions(uint(s.GetHeight()))
 				for ri := range rs {
-					h.video = append(h.video, NewHLSStream(vi, Video, s, &rs[ri], true))
+					h.video = append(h.video, NewHLSStream(vi, Video, s, &rs[ri], cfg, true))
 				}
 				if len(h.video) == 0 {
 					h.video = append(h.video, NewHLSStream(vi, Video, s, &Rendition{
 						Height: uint(s.GetHeight()),
-					}, true))
+					}, cfg, true))
 				}
 			}
 			vi++
 		} else if s.GetCodecType() == "audio" {
-			h.audio = append(h.audio, NewHLSStream(ai, Audio, s, nil, false))
+			h.audio = append(h.audio, NewHLSStream(ai, Audio, s, nil, cfg, false))
 			ai++
 		} else if s.GetCodecType() == "subtitle" && s.GetCodecName() != "hdmv_pgs_subtitle" {
-			h.subs = append(h.subs, NewHLSStream(si, Subtitle, s, nil, false))
+			h.subs = append(h.subs, NewHLSStream(si, Subtitle, s, nil, cfg, false))
 			si++
 		}
 	}
@@ -362,4 +378,26 @@ func (s *HLS) MakeMasterPlaylist(out string) error {
 		res.WriteRune('\n')
 	}
 	return os.WriteFile(out+"/index.m3u8", []byte(res.String()), 0644)
+}
+
+type HLSBuilder struct {
+	aacCodec string
+}
+
+type HLSConfig struct {
+	sm       StreamMode
+	aacCodec string
+}
+
+func NewHLSBuilder(c *cli.Context) *HLSBuilder {
+	return &HLSBuilder{
+		aacCodec: c.String(HLSAACCodecFlag),
+	}
+}
+
+func (s *HLSBuilder) Build(in string, probe *cp.ProbeReply) *HLS {
+	return NewHLS(in, probe, &HLSConfig{
+		sm:       Online,
+		aacCodec: s.aacCodec,
+	})
 }

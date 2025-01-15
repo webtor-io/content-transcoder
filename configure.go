@@ -14,6 +14,7 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterWebFlags(app.Flags)
 	app.Flags = cs.RegisterProbeFlags(app.Flags)
 	app.Flags = cs.RegisterPprofFlags(app.Flags)
+	app.Flags = s.RegisterHLSFlags(app.Flags)
 	app.Action = run
 }
 
@@ -43,8 +44,11 @@ func run(c *cli.Context) (err error) {
 	// Setting TouchMap
 	touchMap := s.NewTouchMap()
 
+	// Setting HLSBuilder
+	hlsBuilder := s.NewHLSBuilder(c)
+
 	// Setting Web
-	web := s.NewWeb(c, contentProbe, transcodePool, touchMap)
+	web := s.NewWeb(c, contentProbe, hlsBuilder, transcodePool, touchMap)
 	servers = append(servers, web)
 	defer web.Close()
 

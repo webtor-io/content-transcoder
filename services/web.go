@@ -28,13 +28,13 @@ func RegisterWebFlags(f []cli.Flag) []cli.Flag {
 	return append(f, cli.StringFlag{
 		Name:   webHostFlag + ", H",
 		Usage:  "host",
-		Value:  "0.0.0.0",
-		EnvVar: "HOST",
+		Value:  "",
+		EnvVar: "WEB_HOST",
 	}, cli.IntFlag{
 		Name:   webPortFlag + ", P",
 		Usage:  "port",
 		Value:  8080,
-		EnvVar: "PORT",
+		EnvVar: "WEB_PORT",
 	}, cli.BoolFlag{
 		Name:   webPlayerFlag,
 		Usage:  "player",
@@ -52,9 +52,10 @@ type Web struct {
 	contentProbe  *ContentProbe
 	transcodePool *TranscodePool
 	touchMap      *TouchMap
+	hlsBuilder    *HLSBuilder
 }
 
-func NewWeb(c *cli.Context, contentProbe *ContentProbe, transcodePool *TranscodePool, touchMap *TouchMap) *Web {
+func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, transcodePool *TranscodePool, touchMap *TouchMap) *Web {
 	we := &Web{
 		host:          c.String(webHostFlag),
 		port:          c.Int(webPortFlag),
@@ -63,6 +64,7 @@ func NewWeb(c *cli.Context, contentProbe *ContentProbe, transcodePool *Transcode
 		contentProbe:  contentProbe,
 		transcodePool: transcodePool,
 		touchMap:      touchMap,
+		hlsBuilder:    hlsBuilder,
 	}
 	we.buildHandler()
 	return we
@@ -117,7 +119,7 @@ func (s *Web) transcode(input string, output string) error {
 	if err != nil {
 		return err
 	}
-	hls := NewHLS(input, pr, Online)
+	hls := s.hlsBuilder.Build(input, pr)
 	err = hls.MakeMasterPlaylist(output)
 	if err != nil {
 		return err
@@ -244,7 +246,7 @@ func (s *Web) waitHandler(next http.Handler) http.Handler {
 			if wi.statusCode == http.StatusOK || wi.statusCode == http.StatusNotModified {
 				w.Header().Set("Content-Length", fmt.Sprintf("%v", len(b)))
 				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-				w.Write(b)
+				_, _ = w.Write(b)
 				return
 			}
 			<-time.After(500 * time.Millisecond)

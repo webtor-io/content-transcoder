@@ -5,10 +5,10 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/cli v1.22.16
-	github.com/webtor-io/common-services v0.0.0-20250105173005-fe4606378dff
+	github.com/webtor-io/common-services v0.0.0-20250112153432-554128b56bd5
 	github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415
 	golang.org/x/sys v0.29.0 // indirect
-	google.golang.org/grpc v1.69.2
+	google.golang.org/grpc v1.69.4
 )
 
 require github.com/webtor-io/lazymap v0.0.0-20241211155941-e81d935cfa1d
@@ -41,7 +41,7 @@ require (
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250106144421-5f5ef82da422 // indirect
-	google.golang.org/protobuf v1.36.2 // indirect
+	google.golang.org/protobuf v1.36.3 // indirect
 	mellium.im/sasl v0.3.2 // indirect
 )
 

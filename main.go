@@ -8,7 +8,6 @@ import (
 )
 
 func main() {
-	// log.SetFormatter(joonix.NewFormatter())
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
 	})
