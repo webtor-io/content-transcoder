@@ -177,7 +177,7 @@ func (h *HLSStream) GetCodecParams() []string {
 		params = append(
 			params,
 			"h264",
-			"-vf", fmt.Sprintf("yuv420p,scale=-2:%v", h.r.Height),
+			"-vf", fmt.Sprintf("scale=-2:%v", h.r.Height),
 			"-profile:v", "high",
 			"-preset", "veryfast",
 			"-g", "48", "-keyint_min", "48",
@@ -186,6 +186,7 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-b:v", fmt.Sprintf("%vK", h.r.Rate()),
 			"-maxrate", fmt.Sprintf("%vK", uint(float64(h.r.Rate())*1.3)),
 			"-bufsize", fmt.Sprintf("%vK", uint(float64(h.r.Rate())*1.5)),
+			"-pix_fmt", "yuv420p",
 		)
 	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2) {
 		params = append(
