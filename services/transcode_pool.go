@@ -44,7 +44,6 @@ func (s *TranscodePool) Transcode(out string, h *HLS) error {
 		err := tr.Run()
 		if err != nil {
 			return false, err
-
 		}
 		return true, nil
 	})

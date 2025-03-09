@@ -125,7 +125,10 @@ func (s *Web) transcode(input string, output string) error {
 		return err
 	}
 	go func() {
-		_ = s.transcodePool.Transcode(output, hls)
+		err = s.transcodePool.Transcode(output, hls)
+		if err != nil {
+			log.Error(err)
+		}
 	}()
 	return nil
 }

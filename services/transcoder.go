@@ -1,11 +1,14 @@
 package services
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/pkg/errors"
@@ -31,6 +34,84 @@ func (s *Transcoder) Stop() error {
 		_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
 	}
 	return nil
+}
+
+func (s *Transcoder) isHLSIndexFinished(str *HLSStream) (bool, error) {
+	path := filepath.Join(s.out, str.GetPlaylistName())
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer func(file *os.File) {
+		_ = file.Close()
+	}(file)
+
+	allSegmentsExist := true
+	foundEndlist := false
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "#EXT-X-ENDLIST" {
+			foundEndlist = true
+			break
+		}
+
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		segmentPath := filepath.Join(s.out, line)
+		if _, err = os.Stat(segmentPath); os.IsNotExist(err) {
+			allSegmentsExist = false
+			break
+		}
+	}
+
+	if err = scanner.Err(); err != nil {
+		return false, err
+	}
+
+	return foundEndlist && allSegmentsExist, nil
+}
+
+func (s *Transcoder) isFinished() (bool, error) {
+	for _, stream := range s.h.video {
+		ok, err := s.isHLSIndexFinished(stream)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	for _, stream := range s.h.audio {
+		ok, err := s.isHLSIndexFinished(stream)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	for _, stream := range s.h.subs {
+		ok, err := s.isHLSIndexFinished(stream)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (s *Transcoder) Run() (err error) {
@@ -87,11 +168,17 @@ func (s *Transcoder) Run() (err error) {
 
 	err = s.cmd.Wait()
 	if err != nil {
-		close(done)
-		return errors.Wrap(err, "failed to transcode")
+		log.WithError(err).Warn("got error while transcoding")
 	}
 	log.Info("transcoding finished")
 	close(done)
+	ok, err := s.isFinished()
+	if err != nil {
+		return errors.Wrap(err, "failed to check if ffmpeg finished")
+	}
+	if !ok {
+		return errors.New("ffmpeg not finished")
+	}
 	err = os.WriteFile(fmt.Sprintf("%v/%v", s.out, "done"), []byte{}, 0644)
 	if err != nil {
 		return errors.Wrap(err, "failed to put done marker")
