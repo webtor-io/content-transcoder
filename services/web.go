@@ -246,6 +246,7 @@ func (s *Web) waitHandler(next http.Handler) http.Handler {
 			r.Header.Del("Range")
 			next.ServeHTTP(wi, r)
 			b := wi.GetBufferedBytes()
+			log.Infof("waiting for %v current status %v", r.URL.Path, wi.statusCode)
 			if wi.statusCode == http.StatusOK || wi.statusCode == http.StatusNotModified {
 				w.Header().Set("Content-Length", fmt.Sprintf("%v", len(b)))
 				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
