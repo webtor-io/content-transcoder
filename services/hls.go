@@ -2,16 +2,18 @@ package services
 
 import (
 	"fmt"
-	"github.com/pkg/errors"
-	"github.com/urfave/cli"
-	cp "github.com/webtor-io/content-prober/content-prober"
 	u "net/url"
 	"os"
 	"strings"
+
+	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+	cp "github.com/webtor-io/content-prober/content-prober"
 )
 
 const (
-	HLSAACCodecFlag = "hls-aac-codec"
+	HLSAACCodecFlag             = "hls-aac-codec"
+	DisableVideoTranscodingFlag = "disable-video-transcoding"
 )
 
 func RegisterHLSFlags(f []cli.Flag) []cli.Flag {
@@ -20,6 +22,10 @@ func RegisterHLSFlags(f []cli.Flag) []cli.Flag {
 		Usage:  "specify the hls aac codec",
 		EnvVar: "HLS_AAC_CODEC",
 		Value:  "libfdk_aac",
+	}, cli.BoolFlag{
+		Name:   DisableVideoTranscodingFlag,
+		Usage:  "disable video transcoding",
+		EnvVar: "DISABLE_VIDEO_TRANSCODING",
 	})
 }
 
@@ -111,11 +117,13 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 		return nil, errors.Wrap(err, "Unable to parse url")
 	}
 	if h.primary[0].s.GetCodecType() == "video" {
-		// if h.primary.s.GetCodecName() == "hevc" {
-		// 	return nil, errors.Errorf("hevc codec is not supported")
-		// }
-		if h.primary[0].s.GetHeight() > 1080 {
-			return nil, errors.Errorf("resoulution over 1080p is not supported")
+		if h.primary[0].s.GetCodecName() != "h264" {
+			if h.cfg.disableVideoTranscoding {
+				return nil, errors.Errorf("video transcoding is disabled")
+			}
+			if h.primary[0].s.GetHeight() > 1080 {
+				return nil, errors.Errorf("resoulution over 1080p is not supported")
+			}
 		}
 	}
 	params := []string{}
@@ -382,23 +390,27 @@ func (s *HLS) MakeMasterPlaylist(out string) error {
 }
 
 type HLSBuilder struct {
-	aacCodec string
+	aacCodec                string
+	disableVideoTranscoding bool
 }
 
 type HLSConfig struct {
-	sm       StreamMode
-	aacCodec string
+	sm                      StreamMode
+	aacCodec                string
+	disableVideoTranscoding bool
 }
 
 func NewHLSBuilder(c *cli.Context) *HLSBuilder {
 	return &HLSBuilder{
-		aacCodec: c.String(HLSAACCodecFlag),
+		aacCodec:                c.String(HLSAACCodecFlag),
+		disableVideoTranscoding: c.Bool(DisableVideoTranscodingFlag),
 	}
 }
 
 func (s *HLSBuilder) Build(in string, probe *cp.ProbeReply) *HLS {
 	return NewHLS(in, probe, &HLSConfig{
-		sm:       Online,
-		aacCodec: s.aacCodec,
+		sm:                      Online,
+		aacCodec:                s.aacCodec,
+		disableVideoTranscoding: s.disableVideoTranscoding,
 	})
 }
