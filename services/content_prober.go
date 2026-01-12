@@ -45,7 +45,7 @@ func RegisterContentProberFlags(f []cli.Flag) []cli.Flag {
 }
 
 type ContentProbe struct {
-	lazymap.LazyMap[*cp.ProbeReply]
+	*lazymap.LazyMap[*cp.ProbeReply]
 	host    string
 	port    int
 	timeout int

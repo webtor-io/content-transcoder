@@ -8,7 +8,7 @@ import (
 )
 
 type TouchMap struct {
-	lazymap.LazyMap[bool]
+	*lazymap.LazyMap[bool]
 }
 
 func NewTouchMap() *TouchMap {

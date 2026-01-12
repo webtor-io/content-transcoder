@@ -1,15 +1,16 @@
 package services
 
 import (
-	log "github.com/sirupsen/logrus"
-	"github.com/webtor-io/lazymap"
 	"os"
 	"path"
 	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/webtor-io/lazymap"
 )
 
 type TranscodePool struct {
-	lazymap.LazyMap[bool]
+	*lazymap.LazyMap[bool]
 }
 
 func NewTranscodePool() *TranscodePool {

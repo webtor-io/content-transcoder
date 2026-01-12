@@ -131,6 +131,7 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 	// 	params = append(params, "-re")
 	// }
 	params = append(params,
+		"-fix_sub_duration",
 		"-i", parsedURL.String(),
 		// "-err_detect", "ignore_err",
 		// "-reconnect_at_eof", "1",
@@ -204,6 +205,7 @@ func (h *HLSStream) GetCodecParams() []string {
 		)
 	} else if h.st == Subtitle && h.s.GetCodecName() != "webvtt" {
 		params = append(params, "webvtt")
+
 	} else {
 		params = append(params, "copy")
 	}
