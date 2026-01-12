@@ -14,7 +14,7 @@ ENV CGO_ENABLED=0
 # build the binary with debug information removed
 RUN go build -ldflags '-w -s' -a -installsuffix cgo -o server
 
-FROM jrottenberg/ffmpeg:7-alpine AS ffmpeg
+FROM jrottenberg/ffmpeg:8-alpine AS ffmpeg
 
 # set work dir
 WORKDIR /app
