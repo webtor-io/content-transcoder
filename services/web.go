@@ -156,7 +156,7 @@ func (s *Web) buildHandler() {
 		mux.HandleFunc("/player/", s.playerHandler)
 	}
 	var h http.Handler
-	h = fileHandler()
+	h = fileHandler(s.output)
 	h = s.transcodeHandler(h)
 	h = enrichPlaylistHandler(h)
 	h = s.waitHandler(h)
@@ -281,8 +281,12 @@ func (s *Web) doneHandler(next http.Handler) http.Handler {
 
 }
 
-func fileHandler() http.Handler {
-	d := http.Dir(".")
+func fileHandler(output string) http.Handler {
+	var dir string
+	if strings.HasPrefix(output, "/") {
+		dir = "/"
+	}
+	d := http.Dir(dir)
 	fs := http.FileServer(d)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out := r.Context().Value(OutputDirContext).(string)
