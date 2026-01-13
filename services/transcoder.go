@@ -147,6 +147,8 @@ func (s *Transcoder) Run() (err error) {
 
 	s.cmd.Stdout = io.MultiWriter(os.Stdout, outLog)
 	s.cmd.Stderr = io.MultiWriter(os.Stderr, errLog)
+	//s.cmd.Stdout = outLog
+	//s.cmd.Stderr = errLog
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	err = s.cmd.Start()
 	if err != nil {

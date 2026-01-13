@@ -117,12 +117,12 @@ func (s *Web) transcode(input string, output string) error {
 	}
 	pr, err := s.contentProbe.Get(input, output)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to get probe result")
 	}
 	hls := s.hlsBuilder.Build(input, pr)
 	err = hls.MakeMasterPlaylist(output)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to make master playlist")
 	}
 	go func() {
 		err = s.transcodePool.Transcode(output, hls)
@@ -282,10 +282,11 @@ func (s *Web) doneHandler(next http.Handler) http.Handler {
 }
 
 func fileHandler() http.Handler {
+	d := http.Dir(".")
+	fs := http.FileServer(d)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		out := r.Context().Value(OutputDirContext).(string)
-		d := http.Dir(out)
-		fs := http.FileServer(d)
+		r.URL.Path = out + r.URL.Path
 		fs.ServeHTTP(w, r)
 	})
 }
