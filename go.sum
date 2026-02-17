@@ -157,8 +157,6 @@ github.com/webtor-io/common-services v0.0.0-20251108105453-635ef47a01ea h1:gtoEk
 github.com/webtor-io/common-services v0.0.0-20251108105453-635ef47a01ea/go.mod h1:KWg/F34uDg+IU52yry3jgh0mCloYRMCzpHuU/WRJL2E=
 github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415 h1:8eDD+z0mOqEjBwVcMmhdITnu0utqbx+GgFjMjJ6Scts=
 github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415/go.mod h1:FJnGLg2A5mjOE6IhsdVJA3KkG73QE3OPIy3IZbVJBQ0=
-github.com/webtor-io/lazymap v0.0.0-20251112155450-24fcf0ad4b5d h1:Mm6O+OWvNC52H9+/A9IBxlD8hu9WCKlY17k8jUn6M9o=
-github.com/webtor-io/lazymap v0.0.0-20251112155450-24fcf0ad4b5d/go.mod h1:noIeMCqd9BmJsPsyDt/fYcyvFpdQ+7LnvQKtISl7kMk=
 github.com/webtor-io/lazymap v0.0.0-20260113060019-9b5fa727eb37 h1:d+/1+I6yabVAiWWBVRAFvUiyBr6SJ+qDTurp1gTFmbs=
 github.com/webtor-io/lazymap v0.0.0-20260113060019-9b5fa727eb37/go.mod h1:noIeMCqd9BmJsPsyDt/fYcyvFpdQ+7LnvQKtISl7kMk=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
