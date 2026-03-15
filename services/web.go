@@ -189,7 +189,8 @@ type sessionCreateResponse struct {
 // @Description Creates a new session, probes media, starts FFmpeg from position 0
 // @Tags session
 // @Produce json
-// @Param source_url query string true "Source media URL"
+// @Param source_url query string false "Source media URL (alternative to X-Source-Url header)"
+// @Param X-Source-Url header string false "Source media URL (takes priority over query param)"
 // @Success 200 {object} sessionCreateResponse
 // @Failure 400 {string} string "Missing or invalid source_url"
 // @Failure 500 {string} string "Internal error"

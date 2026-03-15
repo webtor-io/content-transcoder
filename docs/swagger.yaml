@@ -21,10 +21,13 @@ paths:
       description: Creates a new session, probes media, starts FFmpeg from position
         0
       parameters:
-      - description: Source media URL
+      - description: Source media URL (alternative to X-Source-Url header)
         in: query
         name: source_url
-        required: true
+        type: string
+      - description: Source media URL (takes priority over query param)
+        in: header
+        name: X-Source-Url
         type: string
       produces:
       - application/json

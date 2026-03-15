@@ -28,10 +28,15 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Source media URL",
+                        "description": "Source media URL (alternative to X-Source-Url header)",
                         "name": "source_url",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Source media URL (takes priority over query param)",
+                        "name": "X-Source-Url",
+                        "in": "header"
                     }
                 ],
                 "responses": {
