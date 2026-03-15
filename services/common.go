@@ -10,20 +10,42 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
 const (
-	OutputFlag = "output"
+	OutputFlag         = "output"
+	DebugFlag          = "debug"
+	CleanOnStartupFlag = "clean-on-startup"
 )
 
 func RegisterCommonFlags(f []cli.Flag) []cli.Flag {
-	return append(f, cli.StringFlag{
-		Name:   OutputFlag + ", o",
-		Usage:  "output (local path)",
-		Value:  "out",
-		EnvVar: "OUTPUT",
-	})
+	return append(f,
+		cli.StringFlag{
+			Name:   OutputFlag + ", o",
+			Usage:  "output (local path)",
+			Value:  "out",
+			EnvVar: "OUTPUT",
+		},
+		cli.BoolFlag{
+			Name:   DebugFlag,
+			Usage:  "enable debug logging",
+			EnvVar: "DEBUG",
+		},
+		cli.BoolFlag{
+			Name:   CleanOnStartupFlag,
+			Usage:  "clean output directory on startup",
+			EnvVar: "CLEAN_ON_STARTUP",
+		},
+	)
+}
+
+func ConfigureDebug(c *cli.Context) {
+	if c.Bool(DebugFlag) {
+		log.SetLevel(log.DebugLevel)
+		log.Debug("debug logging enabled")
+	}
 }
 
 func DistributeByHash(dirs []string, hash string) (string, error) {

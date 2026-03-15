@@ -1,21 +1,24 @@
 package services
 
 import (
-	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"html/template"
 	"time"
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	cp "github.com/webtor-io/content-prober/content-prober"
 )
 
 const (
@@ -43,28 +46,28 @@ func RegisterWebFlags(f []cli.Flag) []cli.Flag {
 }
 
 type Web struct {
-	host          string
-	port          int
-	player        bool
-	output        string
-	handler       http.Handler
-	ln            net.Listener
-	contentProbe  *ContentProbe
-	transcodePool *TranscodePool
-	touchMap      *TouchMap
-	hlsBuilder    *HLSBuilder
+	host           string
+	port           int
+	player         bool
+	output         string
+	handler        http.Handler
+	ln             net.Listener
+	contentProbe   *ContentProbe
+	hlsBuilder     *HLSBuilder
+	sessionManager *SessionManager
+	touchMap       *TouchMap
 }
 
-func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, transcodePool *TranscodePool, touchMap *TouchMap) *Web {
+func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, sessionManager *SessionManager, touchMap *TouchMap) *Web {
 	we := &Web{
-		host:          c.String(webHostFlag),
-		port:          c.Int(webPortFlag),
-		player:        c.Bool(webPlayerFlag),
-		output:        c.String(OutputFlag),
-		contentProbe:  contentProbe,
-		transcodePool: transcodePool,
-		touchMap:      touchMap,
-		hlsBuilder:    hlsBuilder,
+		host:           c.String(webHostFlag),
+		port:           c.Int(webPortFlag),
+		player:         c.Bool(webPlayerFlag),
+		output:         c.String(OutputFlag),
+		contentProbe:   contentProbe,
+		hlsBuilder:     hlsBuilder,
+		sessionManager: sessionManager,
+		touchMap:       touchMap,
 	}
 	we.buildHandler()
 	return we
@@ -73,8 +76,17 @@ func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, 
 func getSourceURL(r *http.Request) string {
 	if r.Header.Get("X-Source-Url") != "" {
 		return r.Header.Get("X-Source-Url")
-	} else if r.URL.Query().Get("source_url") != "" {
-		return r.URL.Query().Get("source_url")
+	}
+	raw := r.URL.RawQuery
+	const prefix = "source_url="
+	idx := strings.Index(raw, prefix)
+	if idx >= 0 {
+		val := raw[idx+len(prefix):]
+		decoded, err := url.QueryUnescape(val)
+		if err == nil {
+			return decoded
+		}
+		return val
 	}
 	return ""
 }
@@ -84,16 +96,7 @@ type PlayerData struct {
 }
 
 func (s *Web) playerHandler(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	if path == "/player/" {
-		path = "/player/index.html"
-	}
-	path = strings.TrimPrefix(path, "/")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		http.Error(w, "template file not found", http.StatusNotFound)
-		return
-	}
-	tmpl, err := template.ParseFiles(path)
+	tmpl, err := template.ParseFiles("player/index.html")
 	if err != nil {
 		http.Error(w, "unable to load template", http.StatusInternalServerError)
 		return
@@ -107,47 +110,14 @@ func (s *Web) playerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Web) transcode(input string, output string) error {
-	err := os.MkdirAll(output, 0755)
-	if err != nil {
-		return err
-	}
-	if s.transcodePool.IsDone(output) || s.transcodePool.IsTranscoding(output) {
-		return nil
-	}
-	pr, err := s.contentProbe.Get(input, output)
-	if err != nil {
-		return errors.Wrap(err, "failed to get probe result")
-	}
-	hls := s.hlsBuilder.Build(input, pr)
-	err = hls.MakeMasterPlaylist(output)
-	if err != nil {
-		return errors.Wrap(err, "failed to make master playlist")
-	}
-	go func() {
-		err = s.transcodePool.Transcode(output, hls)
-		if err != nil {
-			log.Error(err)
+func getDuration(pr *cp.ProbeReply) float64 {
+	if pr.GetFormat() != nil {
+		d, err := strconv.ParseFloat(pr.GetFormat().GetDuration(), 64)
+		if err == nil {
+			return d
 		}
-	}()
-	return nil
-}
-
-func (s *Web) transcodeHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/index.m3u8" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		sourceURL := r.Context().Value(SourceURLContext).(string)
-		out := r.Context().Value(OutputDirContext).(string)
-		err := s.transcode(sourceURL, out)
-		if err != nil {
-			http.Error(w, "failed to start transcode", http.StatusInternalServerError)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	}
+	return 0
 }
 
 func (s *Web) buildHandler() {
@@ -155,56 +125,22 @@ func (s *Web) buildHandler() {
 	if s.player {
 		mux.HandleFunc("/player/", s.playerHandler)
 	}
-	var h http.Handler
-	h = fileHandler()
-	h = s.transcodeHandler(h)
-	h = enrichPlaylistHandler(h)
-	h = s.waitHandler(h)
-	h = allowCORSHandler(h)
-	h = s.touchHandler(h)
-	h = s.doneHandler(h)
-	h = setContextHandler(h, s.output)
 
-	mux.Handle("/", h)
+	// Session API routes
+	mux.HandleFunc("/session", s.sessionCreateHandler)
+	mux.HandleFunc("/session/", s.sessionRouter)
+
 	s.handler = mux
 }
 
-type contextKey int
-
-const (
-	OutputDirContext contextKey = iota
-	SourceURLContext
-)
-
-func setContextHandler(next http.Handler, output string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := sha1.New()
-		sourceURL := getSourceURL(r)
-		if sourceURL == "" {
-			log.Error("empty source url")
-			http.Error(w, "empty source url", http.StatusBadRequest)
-			return
-		}
-		u, err := url.Parse(sourceURL)
-		if err != nil {
-			log.WithError(err).WithField("source_url", sourceURL).Error("unable to parse source url")
-			http.Error(w, "failed to parse source url", http.StatusInternalServerError)
-			return
-		}
-		h.Write([]byte(u.Path))
-		hash := hex.EncodeToString(h.Sum(nil))
-		dir, err := GetDir(output, hash)
-		if err != nil {
-			log.WithError(err).WithField("hash", hash).Error("unable to get dir")
-			http.Error(w, "failed to get output dir", http.StatusInternalServerError)
-			return
-		}
-		ctx := context.WithValue(r.Context(), OutputDirContext, dir)
-		ctx = context.WithValue(ctx, SourceURLContext, sourceURL)
-
-		r = r.WithContext(ctx)
-		next.ServeHTTP(w, r)
-	})
+func parseSegmentNumber(urlPath string) (int, error) {
+	base := filepath.Base(urlPath)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	parts := strings.Split(base, "-")
+	if len(parts) < 2 {
+		return 0, fmt.Errorf("unexpected segment name: %s", urlPath)
+	}
+	return strconv.Atoi(parts[len(parts)-1])
 }
 
 func (s *Web) Serve() error {
@@ -226,70 +162,254 @@ func (s *Web) Close() {
 	defer func() {
 		log.Info("Web closed")
 	}()
+	s.sessionManager.CloseAll()
 	if s.ln != nil {
 		_ = s.ln.Close()
 	}
 }
 
-func (s *Web) waitHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, ".m3u8") || r.URL.Path == "/index.m3u8" {
-			next.ServeHTTP(w, r)
+// --- Session API handlers ---
+
+type sessionCreateResponse struct {
+	ID       string  `json:"id"`
+	Duration float64 `json:"duration"`
+}
+
+// sessionCreateHandler handles POST /session?source_url=...
+func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sourceURL := getSourceURL(r)
+	if sourceURL == "" {
+		http.Error(w, "missing source_url", http.StatusBadRequest)
+		return
+	}
+
+	// Compute hash dir (same sharding as before)
+	u, err := url.Parse(sourceURL)
+	if err != nil {
+		http.Error(w, "invalid source_url", http.StatusBadRequest)
+		return
+	}
+	h := sha1.New()
+	h.Write([]byte(u.Path))
+	hash := hex.EncodeToString(h.Sum(nil))
+	hashDir, err := GetDir(s.output, hash)
+	if err != nil {
+		http.Error(w, "failed to get output dir", http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.MkdirAll(hashDir, 0755); err != nil {
+		http.Error(w, "failed to create output dir", http.StatusInternalServerError)
+		return
+	}
+
+	// Touch hashDir so external cleanup knows it's active
+	_, _ = s.touchMap.Touch(hashDir)
+
+	// Probe media
+	pr, err := s.contentProbe.Get(sourceURL, hashDir)
+	if err != nil {
+		log.WithError(err).Error("session: failed to probe media")
+		http.Error(w, "failed to probe media", http.StatusInternalServerError)
+		return
+	}
+
+	duration := getDuration(pr)
+	hls := s.hlsBuilder.Build(sourceURL, pr)
+
+	// Create session
+	sess := s.sessionManager.Create(SessionConfig{
+		SourceURL: sourceURL,
+		HashDir:   hashDir,
+		HLS:       hls,
+		Duration:  duration,
+	})
+
+	// Create session directory and write master playlist
+	if err := os.MkdirAll(sess.outputDir, 0755); err != nil {
+		s.sessionManager.Close(sess.id)
+		http.Error(w, "failed to create session dir", http.StatusInternalServerError)
+		return
+	}
+	if err := hls.MakeMasterPlaylist(sess.outputDir); err != nil {
+		s.sessionManager.Close(sess.id)
+		http.Error(w, "failed to create master playlist", http.StatusInternalServerError)
+		return
+	}
+
+	// Start FFmpeg from 0
+	if err := sess.Start(0); err != nil {
+		s.sessionManager.Close(sess.id)
+		log.WithError(err).Error("session: failed to start ffmpeg")
+		http.Error(w, "failed to start transcoding", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := json.Marshal(sessionCreateResponse{
+		ID:       sess.id,
+		Duration: duration,
+	})
+	if err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		return
+	}
+	setCORSHeaders(w)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(resp)
+}
+
+// sessionRouter routes /session/{id}/... requests.
+func (s *Web) sessionRouter(w http.ResponseWriter, r *http.Request) {
+	setCORSHeaders(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Parse path: /session/{id}/...
+	path := strings.TrimPrefix(r.URL.Path, "/session/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	sessionID := parts[0]
+	subPath := ""
+	if len(parts) > 1 {
+		subPath = parts[1]
+	}
+
+	sess := s.sessionManager.Get(sessionID)
+	if sess == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	// Update .touch file on hashDir so external cleanup knows content is active
+	_, _ = s.touchMap.Touch(sess.hashDir)
+
+	// Sanitize subPath — use only the base filename to prevent path traversal
+	safeName := filepath.Base(subPath)
+
+	switch {
+	case subPath == "seek" && r.Method == http.MethodPost:
+		s.sessionSeekHandler(w, r, sess)
+	case subPath == "" && r.Method == http.MethodDelete:
+		s.sessionCloseHandler(w, r, sess)
+	case strings.HasSuffix(safeName, ".m3u8"):
+		s.sessionPlaylistHandler(w, r, sess, safeName)
+	case strings.HasSuffix(safeName, ".ts") || strings.HasSuffix(safeName, ".vtt"):
+		s.sessionSegmentHandler(w, r, sess, safeName)
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+// sessionSeekHandler handles POST /session/{id}/seek?t=...
+func (s *Web) sessionSeekHandler(w http.ResponseWriter, r *http.Request, sess *Session) {
+	tStr := r.URL.Query().Get("t")
+	if tStr == "" {
+		http.Error(w, "missing t parameter", http.StatusBadRequest)
+		return
+	}
+	t, err := strconv.ParseFloat(tStr, 64)
+	if err != nil {
+		http.Error(w, "invalid t parameter", http.StatusBadRequest)
+		return
+	}
+
+	if err := sess.Seek(t); err != nil {
+		log.WithError(err).WithField("sessionID", sess.id).Error("session: seek failed")
+		http.Error(w, "seek failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+// sessionCloseHandler handles DELETE /session/{id}
+func (s *Web) sessionCloseHandler(w http.ResponseWriter, r *http.Request, sess *Session) {
+	s.sessionManager.Close(sess.id)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+// sessionPlaylistHandler handles GET /session/{id}/{stream}.m3u8
+func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, sess *Session, name string) {
+	sess.Touch()
+
+	if name == "index.m3u8" {
+		// Serve master playlist directly from disk
+		data, err := os.ReadFile(filepath.Join(sess.outputDir, "index.m3u8"))
+		if err != nil {
+			http.Error(w, "master playlist not found", http.StatusNotFound)
 			return
 		}
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+		w.Write(data)
+		return
+	}
 
-		for {
-			if r.Context().Err() != nil {
-				return
-			}
-			wi := NewBufferedResponseWrtier(w)
-			r.Header.Del("Range")
-			r.Header.Del("If-Modified-Since")
-			r.Header.Del("If-None-Match")
-			r.Header.Del("If-Unmodified-Since")
-			r.Header.Del("If-Range")
-			next.ServeHTTP(wi, r)
-			b := wi.GetBufferedBytes()
-			log.Infof("waiting for %v current status %v", r.URL.Path, wi.statusCode)
-			if wi.statusCode == http.StatusOK && len(b) > 0 {
-				w.Header().Set("Content-Length", fmt.Sprintf("%v", len(b)))
-				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-				_, _ = w.Write(b)
-				return
-			}
-			<-time.After(500 * time.Millisecond)
+	// Wait for variant playlist
+	data, err := sess.WaitForPlaylist(r.Context(), name, 5*time.Minute)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
 		}
+		log.WithError(err).WithFields(log.Fields{
+			"sessionID": sess.id,
+			"playlist":  name,
+		}).Error("session: playlist timeout")
+		http.Error(w, "playlist timeout", http.StatusGatewayTimeout)
+		return
+	}
 
-	})
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.Write(data)
 }
 
-func (s *Web) touchHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		out := r.Context().Value(OutputDirContext).(string)
-		_, _ = s.touchMap.Touch(out)
-		next.ServeHTTP(w, r)
-	})
-}
+// sessionSegmentHandler handles GET /session/{id}/{segment}.ts|.vtt
+func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess *Session, filename string) {
+	sess.Touch()
 
-func (s *Web) doneHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := r.URL.Query()["done"]; ok {
-			out := r.Context().Value(OutputDirContext).(string)
-			if !s.transcodePool.IsDone(out) {
-				w.WriteHeader(http.StatusNotFound)
+	// If FFmpeg is not running, auto-restart from the right position
+	if !sess.IsRunning() {
+		segNum, err := parseSegmentNumber("/" + filename)
+		if err == nil {
+			if err := sess.RestartForSegment(segNum); err != nil {
+				log.WithError(err).WithField("sessionID", sess.id).Error("session: failed to restart for segment")
 			}
-		} else {
-			next.ServeHTTP(w, r)
 		}
-	})
+	}
 
+	// Wait for the segment file to appear
+	if err := sess.WaitForSegment(r.Context(), filename, 5*time.Minute); err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		log.WithError(err).WithFields(log.Fields{
+			"sessionID": sess.id,
+			"segment":   filename,
+		}).Error("session: segment timeout")
+		http.Error(w, "segment timeout", http.StatusGatewayTimeout)
+		return
+	}
+
+	// Serve the file
+	http.ServeFile(w, r, sess.SegmentPath(filename))
 }
 
-func fileHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		out := r.Context().Value(OutputDirContext).(string)
-		d := http.Dir(out)
-		fs := http.FileServer(d)
-		fs.ServeHTTP(w, r)
-	})
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }

@@ -212,6 +212,11 @@ func (h *HLSStream) GetCodecParams() []string {
 	return params
 }
 
+func (h *HLSStream) IsCopy() bool {
+	codec := h.GetCodecParams()
+	return len(codec) > 0 && codec[len(codec)-1] == "copy"
+}
+
 func (h *HLSStream) GetFFmpegParams(out string) []string {
 
 	params := []string{
@@ -222,6 +227,11 @@ func (h *HLSStream) GetFFmpegParams(out string) []string {
 		"-segment_list", h.GetPlaylistPath(out),
 		"-muxdelay", "0",
 		"-segment_format", h.GetSegmentFormat(),
+	}
+
+	// For transcoded streams (not copy), force exact segment boundaries
+	if !h.IsCopy() {
+		params = append(params, "-break_non_keyframes", "1")
 	}
 
 	params = append(params, h.GetCodecParams()...)

@@ -7,6 +7,9 @@ import (
 	"github.com/webtor-io/lazymap"
 )
 
+// TouchMap tracks last access time per output directory by maintaining a
+// {hash}.touch file alongside the hash directory. External cleanup processes
+// use the .touch mtime to determine whether content is still being accessed.
 type TouchMap struct {
 	*lazymap.LazyMap[bool]
 }
@@ -27,9 +30,7 @@ func (s *TouchMap) touch(path string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		defer func(file *os.File) {
-			_ = file.Close()
-		}(file)
+		defer file.Close()
 	} else {
 		currentTime := time.Now().Local()
 		err = os.Chtimes(f, currentTime, currentTime)

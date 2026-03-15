@@ -1,7 +1,426 @@
 <!doctype html>
 <html lang="en">
-    <body>
-        <a href="mediaelementjs.html">MediaElement.js</a><br />
-        <a href="videojs.html">Video.js</a>
-    </body>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>HLS Player</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #fff; height: 100vh; display: flex; flex-direction: column; }
+
+        #player-container {
+            flex: 1; position: relative; display: flex; align-items: center; justify-content: center;
+            overflow: hidden; background: #000;
+        }
+        video { width: 100%; height: 100%; object-fit: contain; }
+
+        /* Overlay for loading/seeking */
+        #overlay {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.6); z-index: 10;
+        }
+        #overlay.hidden { display: none; }
+        #overlay-inner { text-align: center; }
+        .spinner {
+            width: 48px; height: 48px; border: 3px solid rgba(255,255,255,0.15);
+            border-top-color: #fff; border-radius: 50%;
+            animation: spin 0.8s linear infinite; margin: 0 auto 14px;
+        }
+        #overlay-text { font-size: 16px; color: #ddd; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Big play button */
+        #big-play {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            z-index: 5; cursor: pointer;
+        }
+        #big-play.hidden { display: none; }
+        #big-play svg { width: 72px; height: 72px; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5)); opacity: 0.8; }
+        #big-play:hover svg { opacity: 1; }
+
+        /* Controls bar */
+        #controls {
+            background: #181818; padding: 0 16px; height: 48px;
+            display: flex; align-items: center; gap: 12px;
+            z-index: 20; flex-shrink: 0;
+        }
+
+        .ctrl-btn {
+            background: none; border: none; color: #fff; cursor: pointer;
+            padding: 0; width: 32px; height: 32px;
+            display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .ctrl-btn svg { width: 24px; height: 24px; fill: currentColor; }
+        .ctrl-btn:hover { color: #4fc3f7; }
+
+        /* Seekbar */
+        #seekbar-wrap { flex: 1; display: flex; align-items: center; }
+        #seekbar {
+            width: 100%; height: 5px; -webkit-appearance: none; appearance: none;
+            background: #444; border-radius: 3px; outline: none; cursor: pointer;
+            margin: 0;
+        }
+        #seekbar::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+            background: #4fc3f7; cursor: pointer; margin-top: -4.5px;
+        }
+        #seekbar::-moz-range-thumb {
+            width: 14px; height: 14px; border-radius: 50%;
+            background: #4fc3f7; cursor: pointer; border: none;
+        }
+        #seekbar::-webkit-slider-runnable-track { height: 5px; background: #444; border-radius: 3px; }
+        #seekbar::-moz-range-track { height: 5px; background: #444; border-radius: 3px; }
+
+        #time-display {
+            font-size: 13px; color: #aaa; white-space: nowrap; min-width: 110px;
+            text-align: center; font-variant-numeric: tabular-nums; flex-shrink: 0;
+            line-height: 1;
+        }
+
+        #vol-wrap { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+        #volume {
+            width: 80px; -webkit-appearance: none; appearance: none;
+            background: transparent; outline: none; cursor: pointer;
+            margin: 0; height: 12px;
+        }
+        #volume::-webkit-slider-runnable-track { height: 4px; background: #444; border-radius: 2px; }
+        #volume::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; cursor: pointer; margin-top: -4px; }
+        #volume::-moz-range-track { height: 4px; background: #444; border-radius: 2px; }
+        #volume::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; cursor: pointer; border: none; }
+    </style>
+</head>
+
+<body>
+    <div id="player-container">
+        <video id="video" crossorigin="anonymous" playsinline></video>
+        <div id="overlay">
+            <div id="overlay-inner">
+                <div class="spinner" id="spinner"></div>
+                <div id="overlay-text">Initializing...</div>
+            </div>
+        </div>
+        <div id="big-play" class="hidden" onclick="togglePlay()">
+            <svg viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+    </div>
+
+    <div id="controls">
+        <button class="ctrl-btn" id="play-btn" onclick="togglePlay()" title="Play/Pause">
+            <svg id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <svg id="icon-pause" viewBox="0 0 24 24" style="display:none"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+        </button>
+
+        <div id="seekbar-wrap">
+            <input type="range" id="seekbar" min="0" max="100" step="0.1" value="0">
+        </div>
+
+        <span id="time-display">0:00 / 0:00</span>
+
+        <div id="vol-wrap">
+            <button class="ctrl-btn" id="mute-btn" onclick="toggleMute()" title="Mute">
+                <svg id="icon-vol" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                <svg id="icon-muted" viewBox="0 0 24 24" style="display:none"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+            </button>
+            <input type="range" id="volume" min="0" max="1" step="0.05" value="1">
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script>
+        var rawSource = '{{ .SourceURL }}';
+        var video = document.getElementById('video');
+        var seekbar = document.getElementById('seekbar');
+        var timeDisplay = document.getElementById('time-display');
+        var overlay = document.getElementById('overlay');
+        var overlayText = document.getElementById('overlay-text');
+        var bigPlay = document.getElementById('big-play');
+        var volumeSlider = document.getElementById('volume');
+
+        var sessionId = null;
+        var seekOffset = 0;
+        var mediaDuration = 0;
+        var hls = null;
+        var seeking = false;
+
+        // ── Helpers ──
+
+        function formatTime(s) {
+            if (isNaN(s) || s < 0) s = 0;
+            var h = Math.floor(s / 3600);
+            var m = Math.floor((s % 3600) / 60);
+            var sec = Math.floor(s % 60);
+            if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+            return m + ':' + String(sec).padStart(2, '0');
+        }
+
+        function showOverlay(msg) {
+            overlayText.textContent = msg;
+            document.getElementById('spinner').style.display = '';
+            overlay.classList.remove('hidden');
+        }
+
+        function hideOverlay() {
+            overlay.classList.add('hidden');
+        }
+
+        function updatePlayPauseIcon() {
+            var playing = !video.paused && !video.ended;
+            document.getElementById('icon-play').style.display = playing ? 'none' : '';
+            document.getElementById('icon-pause').style.display = playing ? '' : 'none';
+            bigPlay.classList.toggle('hidden', playing);
+        }
+
+        // ── Play / Pause ──
+
+        function togglePlay() {
+            if (seeking) return;
+            if (video.paused || video.ended) {
+                video.play().catch(function(){});
+            } else {
+                video.pause();
+            }
+        }
+
+        // Click on video area toggles play/pause (but not on controls/overlay)
+        document.getElementById('player-container').addEventListener('click', function(e) {
+            if (e.target === video || e.target === document.getElementById('player-container')) {
+                togglePlay();
+            }
+        });
+
+        video.addEventListener('play', updatePlayPauseIcon);
+        video.addEventListener('pause', updatePlayPauseIcon);
+        video.addEventListener('ended', updatePlayPauseIcon);
+        // Hide overlay only when video actually starts rendering frames
+        video.addEventListener('playing', hideOverlay);
+
+        // ── Volume ──
+
+        function toggleMute() {
+            video.muted = !video.muted;
+            document.getElementById('icon-vol').style.display = video.muted ? 'none' : '';
+            document.getElementById('icon-muted').style.display = video.muted ? '' : 'none';
+            volumeSlider.value = video.muted ? 0 : video.volume;
+        }
+
+        volumeSlider.addEventListener('input', function() {
+            video.volume = parseFloat(this.value);
+            video.muted = video.volume === 0;
+            document.getElementById('icon-vol').style.display = video.muted ? 'none' : '';
+            document.getElementById('icon-muted').style.display = video.muted ? '' : 'none';
+        });
+
+        // ── Session API ──
+
+        async function createSession() {
+            showOverlay('Creating session...');
+            var res = await fetch('/session?source_url=' + encodeURIComponent(rawSource), { method: 'POST' });
+            if (!res.ok) throw new Error('Failed to create session: ' + res.status);
+            var data = await res.json();
+            sessionId = data.id;
+            mediaDuration = data.duration;
+            seekOffset = 0;
+            seekbar.max = mediaDuration || 100;
+            showOverlay('Loading video...');
+        }
+
+        function loadHLS() {
+            if (hls) { hls.destroy(); hls = null; }
+
+            hls = new Hls({
+                debug: false,
+                autoStartLoad: true,
+                startPosition: 0,
+                lowLatencyMode: false,
+                manifestLoadPolicy: {
+                    default: {
+                        maxTimeToFirstByteMs: 600000,
+                        maxLoadTimeMs: 600000,
+                        timeoutRetry: { maxNumRetry: 100, retryDelayMs: 0, maxRetryDelayMs: 10000 },
+                        errorRetry: { maxNumRetry: 100, retryDelayMs: 1000, maxRetryDelayMs: 10000 },
+                    },
+                },
+                fragLoadPolicy: {
+                    default: {
+                        maxTimeToFirstByteMs: 120000,
+                        maxLoadTimeMs: 120000,
+                        timeoutRetry: { maxNumRetry: 20, retryDelayMs: 0, maxRetryDelayMs: 30000 },
+                        errorRetry: { maxNumRetry: 20, retryDelayMs: 1000, maxRetryDelayMs: 30000 },
+                    },
+                },
+                maxBufferSize: 50 * 1000 * 1000,
+                maxBufferLength: 30,
+                maxMaxBufferLength: 60,
+                maxBufferHole: 2,
+                backBufferLength: 0,
+                nudgeMaxRetry: 50,
+                nudgeOffset: 0.2,
+                maxFragLookUpTolerance: 0.5,
+            });
+
+            var mediaErrorRecoveries = 0;
+            hls.loadSource('/session/' + sessionId + '/index.m3u8');
+            hls.attachMedia(video);
+
+            hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                video.play().catch(function() {
+                    hideOverlay();
+                    bigPlay.classList.remove('hidden');
+                });
+            });
+
+            hls.on(Hls.Events.ERROR, function (event, data) {
+                if (data.fatal) {
+                    switch (data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            hls.startLoad();
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            mediaErrorRecoveries++;
+                            if (mediaErrorRecoveries % 2 === 1) {
+                                hls.recoverMediaError();
+                            } else {
+                                hls.swapAudioCodec();
+                                hls.recoverMediaError();
+                            }
+                            video.addEventListener('canplay', function onCanPlay() {
+                                video.removeEventListener('canplay', onCanPlay);
+                                video.play().catch(function(){});
+                            });
+                            break;
+                        default:
+                            showOverlay('Playback error');
+                            hls.destroy();
+                            break;
+                    }
+                }
+            });
+
+            hls.on(Hls.Events.FRAG_LOADED, function () {
+                mediaErrorRecoveries = 0;
+            });
+        }
+
+        // ── Seek via API ──
+
+        async function seekTo(targetTime) {
+            if (seeking || !sessionId) return;
+            targetTime = Math.max(0, Math.min(targetTime, mediaDuration));
+            seeking = true;
+            showOverlay('Seeking to ' + formatTime(targetTime) + '...');
+
+            try {
+                seekOffset = targetTime;
+                var res = await fetch('/session/' + sessionId + '/seek?t=' + targetTime, { method: 'POST' });
+                if (!res.ok) {
+                    showOverlay('Seek failed');
+                    setTimeout(hideOverlay, 2000);
+                    return;
+                }
+                loadHLS();
+            } finally {
+                seeking = false;
+            }
+        }
+
+        // ── Seekbar ──
+
+        // Track whether user is actively dragging
+        var scrubbing = false;
+
+        seekbar.addEventListener('pointerdown', function() {
+            scrubbing = true;
+        });
+
+        // While dragging, update time display only (don't seek yet)
+        seekbar.addEventListener('input', function() {
+            if (scrubbing) {
+                var t = parseFloat(seekbar.value);
+                timeDisplay.textContent = formatTime(t) + ' / ' + formatTime(mediaDuration);
+            }
+        });
+
+        // On release (click or drag end) — perform the actual seek
+        seekbar.addEventListener('change', function() {
+            scrubbing = false;
+            var targetTime = parseFloat(seekbar.value);
+            var currentPos = seekOffset + (video.currentTime || 0);
+            if (Math.abs(targetTime - currentPos) > 2) {
+                seekTo(targetTime);
+            }
+        });
+
+        // Also reset on pointerup in case change doesn't fire
+        seekbar.addEventListener('pointerup', function() {
+            if (scrubbing) {
+                scrubbing = false;
+                var targetTime = parseFloat(seekbar.value);
+                var currentPos = seekOffset + (video.currentTime || 0);
+                if (Math.abs(targetTime - currentPos) > 2) {
+                    seekTo(targetTime);
+                }
+            }
+        });
+
+        // ── UI update loop ──
+
+        function updateUI() {
+            if (!scrubbing && !seeking) {
+                var currentPos = seekOffset + (video.currentTime || 0);
+                seekbar.value = currentPos;
+                timeDisplay.textContent = formatTime(currentPos) + ' / ' + formatTime(mediaDuration);
+            }
+            requestAnimationFrame(updateUI);
+        }
+
+        // ── Keyboard shortcuts ──
+
+        document.addEventListener('keydown', function(e) {
+            if (e.target.tagName === 'INPUT') return;
+            switch(e.key) {
+                case ' ':
+                case 'k':
+                    e.preventDefault();
+                    togglePlay();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    seekTo(seekOffset + (video.currentTime || 0) + 10);
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    seekTo(Math.max(seekOffset + (video.currentTime || 0) - 10, 0));
+                    break;
+                case 'm':
+                    toggleMute();
+                    break;
+            }
+        });
+
+        // ── Cleanup on unload ──
+
+        window.addEventListener('beforeunload', function() {
+            if (sessionId) {
+                navigator.sendBeacon('/session/' + sessionId, '');
+            }
+        });
+
+        // ── Init ──
+
+        if (Hls.isSupported()) {
+            createSession().then(function() {
+                loadHLS();
+                updateUI();
+            }).catch(function(err) {
+                showOverlay('Error: ' + err.message);
+            });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            var videoSrc = '/index.m3u8?source_url=' + encodeURIComponent(rawSource);
+            video.src = videoSrc;
+            video.addEventListener('loadedmetadata', function () { video.play(); });
+        }
+    </script>
+</body>
+
 </html>

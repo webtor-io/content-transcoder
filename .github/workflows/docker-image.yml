@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - 'master'
+      - 'feature/session-transcoding'
     tags:
       - 'v*'
 env:
