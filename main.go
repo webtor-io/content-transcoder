@@ -7,6 +7,11 @@ import (
 	"github.com/urfave/cli"
 )
 
+// @title Content Transcoder API
+// @version 1.0
+// @description HTTP stream to HLS transcoder with session-based seek support. Each viewer creates a session which manages one HLS stream with FFmpeg. Multiple sessions for the same content share FFmpeg processes.
+// @host localhost:8080
+// @BasePath /
 func main() {
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,

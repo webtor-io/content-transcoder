@@ -20,7 +20,10 @@ import (
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 	"github.com/urfave/cli"
+
+	_ "github.com/webtor-io/content-transcoder/docs"
 	cp "github.com/webtor-io/content-prober/content-prober"
 )
 
@@ -133,6 +136,9 @@ func (s *Web) buildHandler() {
 	mux.HandleFunc("/session", s.sessionCreateHandler)
 	mux.HandleFunc("/session/", s.sessionRouter)
 
+	// Swagger UI at /swagger/
+	mux.Handle("/swagger/", httpSwagger.WrapHandler)
+
 	s.handler = mux
 }
 
@@ -179,6 +185,15 @@ type sessionCreateResponse struct {
 }
 
 // sessionCreateHandler handles POST /session?source_url=...
+// @Summary Create transcoding session
+// @Description Creates a new session, probes media, starts FFmpeg from position 0
+// @Tags session
+// @Produce json
+// @Param source_url query string true "Source media URL"
+// @Success 200 {object} sessionCreateResponse
+// @Failure 400 {string} string "Missing or invalid source_url"
+// @Failure 500 {string} string "Internal error"
+// @Router /session [post]
 func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -315,6 +330,17 @@ func (s *Web) sessionRouter(w http.ResponseWriter, r *http.Request) {
 }
 
 // sessionSeekHandler handles POST /session/{id}/seek?t=...
+// @Summary Seek to position
+// @Description Stops current FFmpeg run and starts new one from target position. Seek times are quantized to 30s boundaries.
+// @Tags session
+// @Produce json
+// @Param sessionId path string true "Session ID"
+// @Param t query number true "Target seek time in seconds"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {string} string "Missing or invalid t parameter"
+// @Failure 404 {string} string "Session not found"
+// @Failure 500 {string} string "Seek failed"
+// @Router /session/{sessionId}/seek [post]
 func (s *Web) sessionSeekHandler(w http.ResponseWriter, r *http.Request, sess *Session) {
 	tStr := r.URL.Query().Get("t")
 	if tStr == "" {
@@ -338,6 +364,14 @@ func (s *Web) sessionSeekHandler(w http.ResponseWriter, r *http.Request, sess *S
 }
 
 // sessionCloseHandler handles DELETE /session/{id}
+// @Summary Close session
+// @Description Stops FFmpeg, releases shared run, removes session directory
+// @Tags session
+// @Produce json
+// @Param sessionId path string true "Session ID"
+// @Success 200 {object} map[string]bool
+// @Failure 404 {string} string "Session not found"
+// @Router /session/{sessionId} [delete]
 func (s *Web) sessionCloseHandler(w http.ResponseWriter, r *http.Request, sess *Session) {
 	s.sessionManager.Close(sess.id)
 	w.Header().Set("Content-Type", "application/json")
@@ -345,6 +379,16 @@ func (s *Web) sessionCloseHandler(w http.ResponseWriter, r *http.Request, sess *
 }
 
 // sessionPlaylistHandler handles GET /session/{id}/{stream}.m3u8
+// @Summary Get HLS playlist
+// @Description Returns master playlist (index.m3u8) or variant EVENT playlist. Query params are appended to all file references for auth forwarding.
+// @Tags session
+// @Produce application/vnd.apple.mpegurl
+// @Param sessionId path string true "Session ID"
+// @Param stream path string true "Playlist name (index.m3u8, v0-720.m3u8, a0.m3u8, etc.)"
+// @Success 200 {string} string "HLS playlist"
+// @Failure 404 {string} string "Session or playlist not found"
+// @Failure 504 {string} string "Timeout waiting for playlist"
+// @Router /session/{sessionId}/{stream}.m3u8 [get]
 func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, sess *Session, name string) {
 	sess.Touch()
 
@@ -384,6 +428,16 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 }
 
 // sessionSegmentHandler handles GET /session/{id}/{segment}.ts|.vtt
+// @Summary Get HLS segment
+// @Description Returns a .ts or .vtt segment. Waits for file to appear if FFmpeg hasn't produced it yet. Auto-restarts FFmpeg if it was stopped.
+// @Tags session
+// @Produce video/mp2t
+// @Param sessionId path string true "Session ID"
+// @Param segment path string true "Segment filename (e.g., v0-720-0.ts, a0-5.ts)"
+// @Success 200 {file} binary "Segment data"
+// @Failure 404 {string} string "Session not found"
+// @Failure 504 {string} string "Timeout waiting for segment"
+// @Router /session/{sessionId}/{segment} [get]
 func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess *Session, filename string) {
 	sess.Touch()
 

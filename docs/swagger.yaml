@@ -1,0 +1,177 @@
+basePath: /
+definitions:
+  services.sessionCreateResponse:
+    properties:
+      duration:
+        type: number
+      id:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: HTTP stream to HLS transcoder with session-based seek support. Each
+    viewer creates a session which manages one HLS stream with FFmpeg. Multiple sessions
+    for the same content share FFmpeg processes.
+  title: Content Transcoder API
+  version: "1.0"
+paths:
+  /session:
+    post:
+      description: Creates a new session, probes media, starts FFmpeg from position
+        0
+      parameters:
+      - description: Source media URL
+        in: query
+        name: source_url
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/services.sessionCreateResponse'
+        "400":
+          description: Missing or invalid source_url
+          schema:
+            type: string
+        "500":
+          description: Internal error
+          schema:
+            type: string
+      summary: Create transcoding session
+      tags:
+      - session
+  /session/{sessionId}:
+    delete:
+      description: Stops FFmpeg, releases shared run, removes session directory
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "404":
+          description: Session not found
+          schema:
+            type: string
+      summary: Close session
+      tags:
+      - session
+  /session/{sessionId}/{segment}:
+    get:
+      description: Returns a .ts or .vtt segment. Waits for file to appear if FFmpeg
+        hasn't produced it yet. Auto-restarts FFmpeg if it was stopped.
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Segment filename (e.g., v0-720-0.ts, a0-5.ts)
+        in: path
+        name: segment
+        required: true
+        type: string
+      produces:
+      - video/mp2t
+      responses:
+        "200":
+          description: Segment data
+          schema:
+            type: file
+        "404":
+          description: Session not found
+          schema:
+            type: string
+        "504":
+          description: Timeout waiting for segment
+          schema:
+            type: string
+      summary: Get HLS segment
+      tags:
+      - session
+  /session/{sessionId}/{stream}.m3u8:
+    get:
+      description: Returns master playlist (index.m3u8) or variant EVENT playlist.
+        Query params are appended to all file references for auth forwarding.
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Playlist name (index.m3u8, v0-720.m3u8, a0.m3u8, etc.)
+        in: path
+        name: stream
+        required: true
+        type: string
+      produces:
+      - application/vnd.apple.mpegurl
+      responses:
+        "200":
+          description: HLS playlist
+          schema:
+            type: string
+        "404":
+          description: Session or playlist not found
+          schema:
+            type: string
+        "504":
+          description: Timeout waiting for playlist
+          schema:
+            type: string
+      summary: Get HLS playlist
+      tags:
+      - session
+  /session/{sessionId}/seek:
+    post:
+      description: Stops current FFmpeg run and starts new one from target position.
+        Seek times are quantized to 30s boundaries.
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Target seek time in seconds
+        in: query
+        name: t
+        required: true
+        type: number
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Missing or invalid t parameter
+          schema:
+            type: string
+        "404":
+          description: Session not found
+          schema:
+            type: string
+        "500":
+          description: Seek failed
+          schema:
+            type: string
+      summary: Seek to position
+      tags:
+      - session
+swagger: "2.0"
