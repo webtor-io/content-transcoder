@@ -1,18 +1,21 @@
 package services
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
-	"html/template"
 	"time"
 
 	"github.com/pkg/errors"
@@ -345,32 +348,35 @@ func (s *Web) sessionCloseHandler(w http.ResponseWriter, r *http.Request, sess *
 func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, sess *Session, name string) {
 	sess.Touch()
 
+	var data []byte
+	var err error
+
 	if name == "index.m3u8" {
 		// Serve master playlist directly from disk
-		data, err := os.ReadFile(filepath.Join(sess.outputDir, "index.m3u8"))
+		data, err = os.ReadFile(filepath.Join(sess.outputDir, "index.m3u8"))
 		if err != nil {
 			http.Error(w, "master playlist not found", http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-		w.Write(data)
-		return
-	}
-
-	// Wait for variant playlist
-	data, err := sess.WaitForPlaylist(r.Context(), name, 5*time.Minute)
-	if err != nil {
-		if r.Context().Err() != nil {
+	} else {
+		// Wait for variant playlist
+		data, err = sess.WaitForPlaylist(r.Context(), name, 5*time.Minute)
+		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			log.WithError(err).WithFields(log.Fields{
+				"sessionID": sess.id,
+				"playlist":  name,
+			}).Error("session: playlist timeout")
+			http.Error(w, "playlist timeout", http.StatusGatewayTimeout)
 			return
 		}
-		log.WithError(err).WithFields(log.Fields{
-			"sessionID": sess.id,
-			"playlist":  name,
-		}).Error("session: playlist timeout")
-		http.Error(w, "playlist timeout", http.StatusGatewayTimeout)
-		return
 	}
+
+	// Enrich: append query params (api-key, token, etc.) to all file
+	// references so subsequent requests carry the same auth context.
+	data = enrichPlaylistData(data, r.URL.RawQuery)
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
@@ -406,6 +412,29 @@ func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess
 
 	// Serve the file
 	http.ServeFile(w, r, sess.SegmentPath(filename))
+}
+
+// playlistFilePattern matches segment and playlist references in HLS playlists.
+// E.g., "v0-720-5.ts", "a0-3.ts", "v0-720.m3u8", "a0.m3u8"
+var playlistFilePattern = regexp.MustCompile(`[asv][0-9]+(-[0-9]+)?(-[0-9]+)?\.[0-9a-z]{2,4}`)
+
+// enrichPlaylistData appends the request's query parameters to all segment
+// and playlist references in an HLS playlist. In production, query params
+// carry auth tokens (api-key, token) that must be forwarded to subsequent
+// requests for segments and sub-playlists.
+func enrichPlaylistData(data []byte, rawQuery string) []byte {
+	if rawQuery == "" {
+		return data
+	}
+	var sb strings.Builder
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = playlistFilePattern.ReplaceAllString(line, "$0?"+rawQuery)
+		sb.WriteString(line)
+		sb.WriteRune('\n')
+	}
+	return []byte(sb.String())
 }
 
 func setCORSHeaders(w http.ResponseWriter) {
