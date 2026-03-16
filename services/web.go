@@ -404,6 +404,12 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 			return
 		}
 	} else {
+		// Ensure FFmpeg is running (may have been released due to inactivity)
+		if !sess.IsRunning() {
+			if err := sess.EnsureRunning(); err != nil {
+				log.WithError(err).WithField("sessionID", sess.id).Error("session: failed to restart for playlist")
+			}
+		}
 		// Wait for variant playlist
 		data, err = sess.WaitForPlaylist(r.Context(), name, 5*time.Minute)
 		if err != nil {

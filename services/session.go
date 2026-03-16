@@ -226,6 +226,26 @@ func (s *Session) LastAccess() time.Time {
 	return s.lastAccess
 }
 
+// EnsureRunning re-acquires the FFmpeg run if it's not currently running.
+// Used by playlist handlers to restart after inactivity-based release.
+func (s *Session) EnsureRunning() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return errors.New("session is closed")
+	}
+	if s.run != nil && s.run.IsRunning() {
+		return nil
+	}
+
+	s.logger.WithField("seekTime", fmt.Sprintf("%.3f", s.seekTime)).
+		Info("session: auto-restarting run")
+
+	s.releaseRunLocked()
+	return s.acquireRunLocked()
+}
+
 // RestartForSegment releases the current run and acquires a new one
 // at the calculated seek position for the given segment number.
 func (s *Session) RestartForSegment(segNum int) error {
