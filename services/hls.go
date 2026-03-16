@@ -70,10 +70,6 @@ var DefaultRenditions = []Rendition{
 		Height:  1080,
 		DefRate: 8000,
 	},
-	{
-		Height:  2160,
-		DefRate: 20000,
-	},
 }
 
 func (s *Rendition) Rate() uint {
@@ -124,6 +120,9 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 		if h.primary[0].s.GetCodecName() != "h264" {
 			if h.cfg.disableVideoTranscoding {
 				return nil, errors.Errorf("video transcoding is disabled")
+			}
+			if h.primary[0].s.GetHeight() > 1080 {
+				return nil, errors.Errorf("resoulution over 1080p is not supported")
 			}
 		}
 	}
