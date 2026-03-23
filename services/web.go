@@ -317,6 +317,8 @@ func (s *Web) sessionRouter(w http.ResponseWriter, r *http.Request) {
 	safeName := filepath.Base(subPath)
 
 	switch {
+	case subPath == "seek" && r.Method == http.MethodGet:
+		s.sessionSeekOffsetHandler(w, r, sess)
 	case subPath == "seek" && r.Method == http.MethodPost:
 		s.sessionSeekHandler(w, r, sess)
 	case subPath == "" && r.Method == http.MethodDelete:
@@ -362,6 +364,21 @@ func (s *Web) sessionSeekHandler(w http.ResponseWriter, r *http.Request, sess *S
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
+}
+
+// sessionSeekOffsetHandler handles GET /session/{id}/seek
+// @Summary Get current seek offset
+// @Description Returns the current quantized seek position of the session
+// @Tags session
+// @Produce json
+// @Param sessionId path string true "Session ID"
+// @Success 200 {object} map[string]float64
+// @Failure 404 {string} string "Session not found"
+// @Router /session/{sessionId}/seek [get]
+func (s *Web) sessionSeekOffsetHandler(w http.ResponseWriter, r *http.Request, sess *Session) {
+	sess.Touch()
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"offset":%.3f}`, sess.SeekTime())
 }
 
 // sessionCloseHandler handles DELETE /session/{id}

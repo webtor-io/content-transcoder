@@ -219,6 +219,13 @@ func (s *Session) IsClosed() bool {
 	return s.closed
 }
 
+// SeekTime returns the current quantized seek offset in seconds.
+func (s *Session) SeekTime() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.seekTime
+}
+
 // LastAccess returns the last access timestamp.
 func (s *Session) LastAccess() time.Time {
 	s.mu.Lock()
