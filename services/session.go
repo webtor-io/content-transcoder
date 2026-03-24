@@ -311,6 +311,12 @@ func (s *Session) PlaylistForStream(name string) ([]byte, error) {
 			"#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n", 1)
 	}
 
+	// Force players to start from the beginning (iOS Safari starts at live edge otherwise)
+	if !strings.Contains(content, "#EXT-X-START:") {
+		content = strings.Replace(content, "#EXTM3U\n",
+			"#EXTM3U\n#EXT-X-START:TIME-OFFSET=0\n", 1)
+	}
+
 	return []byte(content), nil
 }
 
