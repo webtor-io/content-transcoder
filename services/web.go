@@ -427,18 +427,36 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 				log.WithError(err).WithField("sessionID", sess.id).Error("session: failed to restart for playlist")
 			}
 		}
+
+		// For subtitle playlists (s*.m3u8): use a short timeout and return
+		// an empty playlist if FFmpeg can't produce subtitle segments (e.g.
+		// forced/bitmap subs with no data). This prevents blocking video playback.
+		timeout := 5 * time.Minute
+		if isSubtitlePlaylist(name) {
+			timeout = 30 * time.Second
+		}
+
 		// Wait for variant playlist
-		data, err = sess.WaitForPlaylist(r.Context(), name, 5*time.Minute)
+		data, err = sess.WaitForPlaylist(r.Context(), name, timeout)
 		if err != nil {
 			if r.Context().Err() != nil {
 				return
 			}
-			log.WithError(err).WithFields(log.Fields{
-				"sessionID": sess.id,
-				"playlist":  name,
-			}).Error("session: playlist timeout")
-			http.Error(w, "playlist timeout", http.StatusGatewayTimeout)
-			return
+			// For subtitle playlists, serve an empty valid playlist instead of an error
+			if isSubtitlePlaylist(name) {
+				log.WithFields(log.Fields{
+					"sessionID": sess.id,
+					"playlist":  name,
+				}).Warn("session: subtitle playlist not available, serving empty playlist")
+				data = []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-ENDLIST\n")
+			} else {
+				log.WithError(err).WithFields(log.Fields{
+					"sessionID": sess.id,
+					"playlist":  name,
+				}).Error("session: playlist timeout")
+				http.Error(w, "playlist timeout", http.StatusGatewayTimeout)
+				return
+			}
 		}
 	}
 
@@ -513,6 +531,12 @@ func enrichPlaylistData(data []byte, rawQuery string) []byte {
 		sb.WriteRune('\n')
 	}
 	return []byte(sb.String())
+}
+
+// isSubtitlePlaylist returns true if the playlist name corresponds to a
+// subtitle stream (e.g. "s0.m3u8", "s1.m3u8").
+func isSubtitlePlaylist(name string) bool {
+	return strings.HasPrefix(name, "s") && strings.HasSuffix(name, ".m3u8")
 }
 
 func setCORSHeaders(w http.ResponseWriter) {
