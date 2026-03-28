@@ -437,7 +437,7 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 			data, err = sess.PlaylistForStream(name)
 			if err != nil || len(data) == 0 || !isValidSessionPlaylist(data) {
 				// Not ready yet — wait briefly on first attempt
-				data, err = sess.WaitForPlaylist(r.Context(), name, 30*time.Second)
+				data, err = sess.WaitForPlaylist(r.Context(), name, 5*time.Second)
 			}
 			if err != nil || len(data) == 0 {
 				if r.Context().Err() != nil {
