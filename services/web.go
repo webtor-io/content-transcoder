@@ -428,28 +428,30 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 			}
 		}
 
-		// For subtitle playlists (s*.m3u8): use a short timeout and return
-		// an empty playlist if FFmpeg can't produce subtitle segments (e.g.
-		// forced/bitmap subs with no data). This prevents blocking video playback.
-		timeout := 5 * time.Minute
+		// For subtitle playlists (s*.m3u8): check if the playlist already
+		// exists on disk. If not, use a short timeout and fall back to an
+		// empty live playlist so subtitle issues don't block video playback.
+		// Without #EXT-X-ENDLIST the player keeps polling, so if FFmpeg
+		// eventually produces segments they will be picked up.
 		if isSubtitlePlaylist(name) {
-			timeout = 30 * time.Second
-		}
-
-		// Wait for variant playlist
-		data, err = sess.WaitForPlaylist(r.Context(), name, timeout)
-		if err != nil {
-			if r.Context().Err() != nil {
-				return
+			data, err = sess.PlaylistForStream(name)
+			if err != nil || len(data) == 0 || !isValidSessionPlaylist(data) {
+				// Not ready yet — wait briefly on first attempt
+				data, err = sess.WaitForPlaylist(r.Context(), name, 30*time.Second)
 			}
-			// For subtitle playlists, serve an empty valid playlist instead of an error
-			if isSubtitlePlaylist(name) {
-				log.WithFields(log.Fields{
-					"sessionID": sess.id,
-					"playlist":  name,
-				}).Warn("session: subtitle playlist not available, serving empty playlist")
-				data = []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-ENDLIST\n")
-			} else {
+			if err != nil || len(data) == 0 {
+				if r.Context().Err() != nil {
+					return
+				}
+				data = []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n")
+			}
+		} else {
+			// Wait for variant playlist
+			data, err = sess.WaitForPlaylist(r.Context(), name, 5*time.Minute)
+			if err != nil {
+				if r.Context().Err() != nil {
+					return
+				}
 				log.WithError(err).WithFields(log.Fields{
 					"sessionID": sess.id,
 					"playlist":  name,
@@ -534,9 +536,21 @@ func enrichPlaylistData(data []byte, rawQuery string) []byte {
 }
 
 // isSubtitlePlaylist returns true if the playlist name corresponds to a
-// subtitle stream (e.g. "s0.m3u8", "s1.m3u8").
+// subtitle stream (e.g. "s0.m3u8", "s1.m3u8"). Format: s{digit(s)}.m3u8
 func isSubtitlePlaylist(name string) bool {
-	return strings.HasPrefix(name, "s") && strings.HasSuffix(name, ".m3u8")
+	if !strings.HasPrefix(name, "s") || !strings.HasSuffix(name, ".m3u8") {
+		return false
+	}
+	mid := name[1 : len(name)-5] // between "s" and ".m3u8"
+	if mid == "" {
+		return false
+	}
+	for _, c := range mid {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func setCORSHeaders(w http.ResponseWriter) {

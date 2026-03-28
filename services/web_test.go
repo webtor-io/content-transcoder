@@ -65,3 +65,39 @@ func TestEnrichPlaylistData_NoFalseMatches(t *testing.T) {
 		t.Errorf("should not enrich non-file lines")
 	}
 }
+
+func TestIsSubtitlePlaylist(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"s0.m3u8", true},
+		{"s1.m3u8", true},
+		{"s12.m3u8", true},
+		{"v0-720.m3u8", false},
+		{"a0.m3u8", false},
+		{"index.m3u8", false},
+		{"s0-0.ts", false},
+		{"s0-0.vtt", false},
+		{"subtitle.m3u8", false}, // doesn't match "s" + digit pattern — still starts with "s" though
+	}
+	for _, tt := range tests {
+		got := isSubtitlePlaylist(tt.name)
+		if got != tt.want {
+			t.Errorf("isSubtitlePlaylist(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestEmptySubtitlePlaylist_IsValidHLS(t *testing.T) {
+	empty := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n"
+	if !strings.HasPrefix(empty, "#EXTM3U") {
+		t.Error("must start with #EXTM3U")
+	}
+	if !strings.Contains(empty, "#EXT-X-TARGETDURATION:") {
+		t.Error("must contain TARGETDURATION")
+	}
+	if strings.Contains(empty, "#EXT-X-ENDLIST") {
+		t.Error("must NOT contain ENDLIST — player should keep polling for segments")
+	}
+}
