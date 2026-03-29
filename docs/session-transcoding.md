@@ -37,6 +37,20 @@ The transcoder uses a session-based model where each viewer creates a session vi
 3. Inject `#EXT-X-PLAYLIST-TYPE:EVENT` if missing
 4. Return as `application/vnd.apple.mpegurl`
 
+#### Subtitle Playlist Fallback
+
+Subtitle streams (playlists matching `s{N}.m3u8`) use a shorter timeout (5s vs 5min). If FFmpeg cannot produce subtitle segments within that time (common with forced/bitmap subtitle tracks that have no data), the handler returns a valid empty HLS live playlist:
+
+```
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+```
+
+Without `#EXT-X-ENDLIST` — the player keeps polling, so if segments appear later they get picked up. This prevents subtitle issues from blocking video playback entirely.
+
+Detection: `isSubtitlePlaylist(name)` checks the `s{digits}.m3u8` pattern. The first request does a quick check (`PlaylistForStream`) then waits up to 5s. Subsequent requests return the empty playlist immediately if the file still doesn't exist.
+
 ### Inactivity
 
 - **60s idle** → Session releases its run (FFmpeg may continue for other sessions)
