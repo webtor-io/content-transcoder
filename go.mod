@@ -8,7 +8,7 @@ require (
 	github.com/webtor-io/common-services v0.0.0-20251108105453-635ef47a01ea
 	github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415
 	golang.org/x/sys v0.40.0 // indirect
-	google.golang.org/grpc v1.78.0
+	google.golang.org/grpc v1.79.3
 )
 
 require (
