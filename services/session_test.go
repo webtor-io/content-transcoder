@@ -231,6 +231,37 @@ func TestPlaylistForStream(t *testing.T) {
 	}
 }
 
+func TestPlaylistForStream_SessionOffset(t *testing.T) {
+	dir := t.TempDir()
+	runMgr := NewRunManager()
+	defer runMgr.CloseAll()
+
+	s := NewSession(SessionConfig{ID: "test-offset", HashDir: dir, RunMgr: runMgr})
+	s.seekTime = 1500 // 25:00 movie-time
+
+	runDir := filepath.Join(dir, "runs", "seek-1500.000")
+	os.MkdirAll(runDir, 0755)
+	run := newTranscodeRun("test:seek:1500.000", dir, 1500, "", nil)
+	run.AddRef()
+	s.run = run
+
+	content := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.0,\nv0-0.ts\n"
+	os.WriteFile(filepath.Join(runDir, "v0.m3u8.ffmpeg"), []byte(content), 0644)
+
+	got, err := s.PlaylistForStream("v0.m3u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := string(got)
+
+	if !containsStr(result, "#EXT-X-SESSION-OFFSET:1500") {
+		t.Errorf("should inject #EXT-X-SESSION-OFFSET:1500, got:\n%s", result)
+	}
+	if countStr(result, "#EXT-X-SESSION-OFFSET:") != 1 {
+		t.Errorf("should have exactly one #EXT-X-SESSION-OFFSET, got:\n%s", result)
+	}
+}
+
 func TestPlaylistForStream_AlreadyHasType(t *testing.T) {
 	dir := t.TempDir()
 	runMgr := NewRunManager()

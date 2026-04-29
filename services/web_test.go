@@ -1,6 +1,10 @@
 package services
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -86,6 +90,70 @@ func TestIsSubtitlePlaylist(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("isSubtitlePlaylist(%q) = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestSessionPlaylistHandler_MasterInjectsSessionOffset(t *testing.T) {
+	dir := t.TempDir()
+	runMgr := NewRunManager()
+	defer runMgr.CloseAll()
+
+	sess := NewSession(SessionConfig{ID: "test-master-offset", HashDir: dir, RunMgr: runMgr})
+	if err := os.MkdirAll(sess.outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nv0-720.m3u8\n"
+	if err := os.WriteFile(filepath.Join(sess.outputDir, "index.m3u8"), []byte(master), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sess.seekTime = 1500
+
+	web := &Web{}
+	r := httptest.NewRequest(http.MethodGet, "/session/test-master-offset/index.m3u8", nil)
+	w := httptest.NewRecorder()
+	web.sessionPlaylistHandler(w, r, sess, "index.m3u8")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "#EXT-X-SESSION-OFFSET:1500") {
+		t.Errorf("master should contain #EXT-X-SESSION-OFFSET:1500, got:\n%s", body)
+	}
+	if strings.Count(body, "#EXT-X-SESSION-OFFSET:") != 1 {
+		t.Errorf("should have exactly one #EXT-X-SESSION-OFFSET tag, got:\n%s", body)
+	}
+	if !strings.Contains(body, "#EXT-X-STREAM-INF:BANDWIDTH=5000000") {
+		t.Errorf("master content should be preserved, got:\n%s", body)
+	}
+}
+
+func TestSessionPlaylistHandler_MasterIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	runMgr := NewRunManager()
+	defer runMgr.CloseAll()
+
+	sess := NewSession(SessionConfig{ID: "test-master-idemp", HashDir: dir, RunMgr: runMgr})
+	if err := os.MkdirAll(sess.outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	master := "#EXTM3U\n#EXT-X-SESSION-OFFSET:42\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nv0-720.m3u8\n"
+	if err := os.WriteFile(filepath.Join(sess.outputDir, "index.m3u8"), []byte(master), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sess.seekTime = 1500
+
+	web := &Web{}
+	r := httptest.NewRequest(http.MethodGet, "/session/test-master-idemp/index.m3u8", nil)
+	w := httptest.NewRecorder()
+	web.sessionPlaylistHandler(w, r, sess, "index.m3u8")
+
+	body := w.Body.String()
+	if strings.Count(body, "#EXT-X-SESSION-OFFSET:") != 1 {
+		t.Errorf("idempotent: should keep exactly one tag, got:\n%s", body)
+	}
+	if !strings.Contains(body, "#EXT-X-SESSION-OFFSET:42") {
+		t.Errorf("should preserve existing tag value, got:\n%s", body)
 	}
 }
 

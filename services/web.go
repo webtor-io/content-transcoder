@@ -420,6 +420,14 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 			http.Error(w, "master playlist not found", http.StatusNotFound)
 			return
 		}
+
+		// Tag master with movie-time offset of this session so downstream
+		// proxies can compute per-segment movie_time without session-state
+		// lookups. Variant playlists also carry this tag (see PlaylistForStream).
+		if !bytes.Contains(data, []byte("#EXT-X-SESSION-OFFSET:")) {
+			tag := fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.0f\n", sess.SeekTime())
+			data = bytes.Replace(data, []byte("#EXTM3U\n"), []byte(tag), 1)
+		}
 	} else {
 		// Ensure FFmpeg is running (may have been released due to inactivity)
 		if !sess.IsRunning() {

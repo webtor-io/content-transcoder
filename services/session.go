@@ -317,6 +317,15 @@ func (s *Session) PlaylistForStream(name string) ([]byte, error) {
 			"#EXTM3U\n#EXT-X-START:TIME-OFFSET=0\n", 1)
 	}
 
+	// Movie-time offset of segment 0 in this variant. Downstream proxies
+	// use this to compute movie_time per segment (offset + Σ EXTINF) without
+	// querying session state. Quantized to seekQuantum (see Session.Start).
+	// Players ignore unknown #EXT-X-* tags per HLS spec (RFC 8216 §3.1).
+	if !strings.Contains(content, "#EXT-X-SESSION-OFFSET:") {
+		content = strings.Replace(content, "#EXTM3U\n",
+			fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.0f\n", s.seekTime), 1)
+	}
+
 	return []byte(content), nil
 }
 

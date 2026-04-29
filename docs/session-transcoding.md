@@ -35,7 +35,11 @@ The transcoder uses a session-based model where each viewer creates a session vi
 1. Read FFmpeg's `.ffmpeg` file from the run's output directory
 2. Clean: remove `#EXT-X-ALLOW-CACHE:YES` and `#EXT-X-ENDLIST`
 3. Inject `#EXT-X-PLAYLIST-TYPE:EVENT` if missing
-4. Return as `application/vnd.apple.mpegurl`
+4. Inject `#EXT-X-START:TIME-OFFSET=0` so iOS Safari starts at the beginning instead of the live edge
+5. Inject `#EXT-X-SESSION-OFFSET:<seek_seconds>` — movie-time of segment 0 in this variant. Read by downstream proxies (THP grace-window math) and ignored by players per RFC 8216 §3.1
+6. Return as `application/vnd.apple.mpegurl`
+
+The same `#EXT-X-SESSION-OFFSET` tag is also injected into the master `index.m3u8` in `services/web.go` `sessionPlaylistHandler`.
 
 #### Subtitle Playlist Fallback
 
