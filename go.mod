@@ -14,7 +14,7 @@ require (
 require (
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/swaggo/swag v1.16.6
-	github.com/webtor-io/lazymap v0.0.0-20260113060019-9b5fa727eb37
+	github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4
 )
 
 require (
