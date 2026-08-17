@@ -30,6 +30,18 @@ The transcoder uses a session-based model where each viewer creates a session vi
 4. Return early if FFmpeg exits without producing the segment
 5. Serve file via `http.ServeFile`
 
+#### Auto-Restart Budget
+
+Steps 2 (and the playlist handler's `EnsureRunning`) count consecutive
+restart attempts per session. After `maxConsecutiveRestarts` (5) attempts
+with no successfully produced segment in between, both entry points return
+`ErrRestartLimit` and the handlers answer `503` immediately. Without the cap,
+a source that keeps killing FFmpeg loops forever: the player re-requests the
+segment, `Touch()` keeps the session alive past the reaper, and every attempt
+spawns a doomed FFmpeg (observed live for 34h straight on one session). The
+budget resets on a successful segment read (`WaitForSegment`) and on explicit
+`Start`/`Seek` — user action may always try again.
+
 ### Playlist Request (GET /session/{id}/{stream}.m3u8)
 
 1. Read FFmpeg's `.ffmpeg` file from the run's output directory

@@ -432,6 +432,14 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 		// Ensure FFmpeg is running (may have been released due to inactivity)
 		if !sess.IsRunning() {
 			if err := sess.EnsureRunning(); err != nil {
+				if errors.Is(err, ErrRestartLimit) {
+					log.WithError(err).WithFields(log.Fields{
+						"sessionID": sess.id,
+						"playlist":  name,
+					}).Warn("session: restart limit reached")
+					http.Error(w, "transcoder restart limit reached", http.StatusServiceUnavailable)
+					return
+				}
 				log.WithError(err).WithField("sessionID", sess.id).Error("session: failed to restart for playlist")
 			}
 		}
@@ -498,6 +506,17 @@ func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess
 		segNum, err := parseSegmentNumber("/" + filename)
 		if err == nil {
 			if err := sess.RestartForSegment(segNum); err != nil {
+				// Restart budget exhausted — answer right away instead of
+				// burning the WaitForSegment timeout on a run that will
+				// never start. The player's retries stop spawning FFmpeg.
+				if errors.Is(err, ErrRestartLimit) {
+					log.WithError(err).WithFields(log.Fields{
+						"sessionID": sess.id,
+						"segment":   filename,
+					}).Warn("session: restart limit reached")
+					http.Error(w, "transcoder restart limit reached", http.StatusServiceUnavailable)
+					return
+				}
 				log.WithError(err).WithField("sessionID", sess.id).Error("session: failed to restart for segment")
 			}
 		}

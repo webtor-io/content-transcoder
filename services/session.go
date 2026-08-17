@@ -24,7 +24,19 @@ const (
 	// FFmpeg process, same segments on disk). 30s means max imprecision of
 	// ~30s + keyframe gap, which is imperceptible in practice.
 	seekQuantum = 30.0 // seconds
+	// maxConsecutiveRestarts caps auto-restarts (EnsureRunning /
+	// RestartForSegment) between successful segment reads. Without a cap a
+	// session whose source keeps killing FFmpeg loops forever: the player
+	// re-requests the segment, Touch() keeps the session alive, and each
+	// attempt spawns a doomed FFmpeg (observed running for 34h straight).
+	maxConsecutiveRestarts = 5
 )
+
+// ErrRestartLimit is returned by EnsureRunning/RestartForSegment once
+// maxConsecutiveRestarts failed attempts accumulate without a single
+// successfully produced segment. An explicit Seek or Start resets the
+// counter — user action is allowed to try again.
+var ErrRestartLimit = errors.New("too many failed auto-restarts")
 
 // quantizeSeekTime rounds seek time down to the nearest seekQuantum boundary.
 // seekTime=0 is never quantized (always starts from the beginning).
@@ -73,6 +85,10 @@ type Session struct {
 	run    *TranscodeRun
 	runMgr *RunManager
 
+	// Consecutive auto-restart attempts since the last successful segment
+	// read (or explicit Start/Seek). Guarded by mu.
+	restartFails int
+
 	// Lifecycle
 	closed bool
 	logger *log.Entry
@@ -115,6 +131,7 @@ func (s *Session) Start(seekTime float64) error {
 	}
 
 	s.seekTime = quantizeSeekTime(seekTime)
+	s.restartFails = 0
 	return s.acquireRunLocked()
 }
 
@@ -152,6 +169,7 @@ func (s *Session) Seek(seekTime float64) error {
 	oldSeekTime := s.seekTime
 	s.run = nil
 	s.seekTime = seekTime
+	s.restartFails = 0
 	s.lastAccess = time.Now()
 
 	if err := s.acquireRunLocked(); err != nil {
@@ -202,6 +220,14 @@ func (s *Session) Touch() {
 	s.mu.Unlock()
 }
 
+// noteSegmentServed resets the auto-restart budget: a produced segment is
+// proof the current run works, so earlier failed attempts stop counting.
+func (s *Session) noteSegmentServed() {
+	s.mu.Lock()
+	s.restartFails = 0
+	s.mu.Unlock()
+}
+
 // IsRunning returns true if the shared FFmpeg run is currently running.
 func (s *Session) IsRunning() bool {
 	s.mu.Lock()
@@ -245,6 +271,10 @@ func (s *Session) EnsureRunning() error {
 	if s.run != nil && s.run.IsRunning() {
 		return nil
 	}
+	if s.restartFails >= maxConsecutiveRestarts {
+		return ErrRestartLimit
+	}
+	s.restartFails++
 
 	s.logger.WithField("seekTime", fmt.Sprintf("%.3f", s.seekTime)).
 		Info("session: auto-restarting run")
@@ -265,6 +295,10 @@ func (s *Session) RestartForSegment(segNum int) error {
 	if s.run != nil && s.run.IsRunning() {
 		return nil
 	}
+	if s.restartFails >= maxConsecutiveRestarts {
+		return ErrRestartLimit
+	}
+	s.restartFails++
 
 	// Re-acquire at the same seekTime — segments are numbered relative to it.
 	// Don't recalculate: the current seekTime is already the correct position
@@ -399,12 +433,14 @@ func (s *Session) WaitForSegment(ctx context.Context, filename string, timeout t
 
 	for {
 		if info, err := os.Stat(filePath); err == nil && info.Size() > 0 {
+			s.noteSegmentServed()
 			return nil
 		}
 
 		// Don't wait forever if FFmpeg exited
 		if !s.IsRunning() {
 			if info, err := os.Stat(filePath); err == nil && info.Size() > 0 {
+				s.noteSegmentServed()
 				return nil
 			}
 			return errors.Errorf("ffmpeg exited, segment %s not available", filename)

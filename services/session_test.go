@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,16 +14,16 @@ func TestQuantizeSeekTime(t *testing.T) {
 	}{
 		{0, 0},
 		{-5, 0},
-		{10, 0},           // 10 / 30 = 0.33 → 0 * 30 = 0
-		{29.9, 0},         // still in first quantum
-		{30, 30},          // exact boundary
+		{10, 0},   // 10 / 30 = 0.33 → 0 * 30 = 0
+		{29.9, 0}, // still in first quantum
+		{30, 30},  // exact boundary
 		{30.5, 30},
 		{59.9, 30},
 		{60, 60},
-		{500, 480},        // 500 / 30 = 16.66 → 16 * 30 = 480
-		{510, 510},        // 510 / 30 = 17.0 → 17 * 30 = 510
-		{1000, 990},       // 1000 / 30 = 33.33 → 33 * 30 = 990
-		{3292.87, 3270},   // near end of 55min video
+		{500, 480},      // 500 / 30 = 16.66 → 16 * 30 = 480
+		{510, 510},      // 510 / 30 = 17.0 → 17 * 30 = 510
+		{1000, 990},     // 1000 / 30 = 33.33 → 33 * 30 = 990
+		{3292.87, 3270}, // near end of 55min video
 	}
 	for _, tt := range tests {
 		got := quantizeSeekTime(tt.input)
@@ -193,7 +194,7 @@ func TestPlaylistForStream(t *testing.T) {
 	defer runMgr.CloseAll()
 
 	s := NewSession(SessionConfig{
-		ID:     "test-playlist",
+		ID:      "test-playlist",
 		HashDir: dir,
 		RunMgr:  runMgr,
 	})
@@ -376,4 +377,44 @@ func countStr(s, substr string) int {
 		}
 	}
 	return n
+}
+
+func TestRestartLimit(t *testing.T) {
+	dir := t.TempDir()
+	runMgr := NewRunManager()
+	defer runMgr.CloseAll()
+
+	s := NewSession(SessionConfig{ID: "test-restart-limit", HashDir: dir, RunMgr: runMgr})
+
+	// Exhausted budget: both auto-restart entry points must refuse before
+	// touching the RunManager (this test has no usable HLS config, so
+	// reaching acquire would panic — the early return is the point).
+	s.mu.Lock()
+	s.restartFails = maxConsecutiveRestarts
+	s.mu.Unlock()
+
+	if err := s.RestartForSegment(0); !errors.Is(err, ErrRestartLimit) {
+		t.Fatalf("RestartForSegment: want ErrRestartLimit, got %v", err)
+	}
+	if err := s.EnsureRunning(); !errors.Is(err, ErrRestartLimit) {
+		t.Fatalf("EnsureRunning: want ErrRestartLimit, got %v", err)
+	}
+
+	// A successfully served segment resets the budget.
+	s.noteSegmentServed()
+	s.mu.Lock()
+	fails := s.restartFails
+	s.mu.Unlock()
+	if fails != 0 {
+		t.Fatalf("noteSegmentServed: restartFails = %d, want 0", fails)
+	}
+
+	// Closed-session error still wins over the limit.
+	s.mu.Lock()
+	s.restartFails = maxConsecutiveRestarts
+	s.mu.Unlock()
+	s.Close()
+	if err := s.RestartForSegment(0); errors.Is(err, ErrRestartLimit) || err == nil {
+		t.Fatalf("closed session: want closed error, got %v", err)
+	}
 }
