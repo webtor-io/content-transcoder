@@ -89,6 +89,12 @@ type Session struct {
 	// read (or explicit Start/Seek). Guarded by mu.
 	restartFails int
 
+	// capWarnOnce dedupes the "restart limit reached" warning: the message
+	// is answered on EVERY playlist/segment request to a capped session, and
+	// a single capped session was measured at 10-19K identical log lines per
+	// day. One line per session carries the same signal.
+	capWarnOnce sync.Once
+
 	// Lifecycle
 	closed bool
 	logger *log.Entry
