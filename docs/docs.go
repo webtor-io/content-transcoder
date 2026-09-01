@@ -52,6 +52,12 @@ const docTemplate = `{
                             "type": "string"
                         }
                     },
+                    "415": {
+                        "description": "Source cannot be transcoded (resolution over 1080p or transcoding disabled)",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     "500": {
                         "description": "Internal error",
                         "schema": {
@@ -100,6 +106,43 @@ const docTemplate = `{
             }
         },
         "/session/{sessionId}/seek": {
+            "get": {
+                "description": "Returns the current quantized seek position of the session",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "session"
+                ],
+                "summary": "Get current seek offset",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "number",
+                                "format": "float64"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Session not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
             "post": {
                 "description": "Stops current FFmpeg run and starts new one from target position. Seek times are quantized to 30s boundaries.",
                 "produces": [

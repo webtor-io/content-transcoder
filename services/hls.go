@@ -101,6 +101,14 @@ const (
 	Subtitle StreamType = "s"
 )
 
+// Content-level rejections: the source can never be transcoded by this
+// deployment, as opposed to a transient internal failure. Surfaced to the
+// client verbatim (HTTP 415) so upstream UIs can show a specific message.
+var (
+	ErrTranscodingDisabled    = errors.New("video transcoding is disabled")
+	ErrResolutionNotSupported = errors.New("resolution over 1080p is not supported")
+)
+
 type HLS struct {
 	in      string
 	primary []*HLSStream
@@ -119,10 +127,10 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 	if h.primary[0].s.GetCodecType() == "video" {
 		if h.primary[0].s.GetCodecName() != "h264" {
 			if h.cfg.disableVideoTranscoding {
-				return nil, errors.Errorf("video transcoding is disabled")
+				return nil, ErrTranscodingDisabled
 			}
 			if h.primary[0].s.GetHeight() > 1080 {
-				return nil, errors.Errorf("resoulution over 1080p is not supported")
+				return nil, ErrResolutionNotSupported
 			}
 		}
 	}

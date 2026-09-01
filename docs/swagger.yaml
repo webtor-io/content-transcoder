@@ -40,6 +40,11 @@ paths:
           description: Missing or invalid source_url
           schema:
             type: string
+        "415":
+          description: Source cannot be transcoded (resolution over 1080p or transcoding
+            disabled)
+          schema:
+            type: string
         "500":
           description: Internal error
           schema:
@@ -139,6 +144,31 @@ paths:
       tags:
       - session
   /session/{sessionId}/seek:
+    get:
+      description: Returns the current quantized seek position of the session
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: float64
+              type: number
+            type: object
+        "404":
+          description: Session not found
+          schema:
+            type: string
+      summary: Get current seek offset
+      tags:
+      - session
     post:
       description: Stops current FFmpeg run and starts new one from target position.
         Seek times are quantized to 30s boundaries.

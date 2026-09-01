@@ -15,6 +15,13 @@ The transcoder uses a session-based model where each viewer creates a session vi
 5. Acquire a shared `TranscodeRun` at position 0 via `RunManager`
 6. Return `{ id, duration }` to player
 
+Errors: content-level rejections (`ErrResolutionNotSupported`,
+`ErrTranscodingDisabled` — the source can never be transcoded by this
+deployment) return **415** with the reason as plain-text body, so upstream
+UIs can show a specific message (web-ui maps the body to a localized error
+via `ClassifyError`). Transient internal failures return a generic **500**
+to avoid leaking internals.
+
 ### Seek (POST /session/{id}/seek?t=...)
 
 1. Quantize seek time to 30s boundary (`quantizeSeekTime`)

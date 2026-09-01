@@ -1,6 +1,7 @@
 package services
 
 import (
+	pkgerrors "github.com/pkg/errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -167,5 +168,24 @@ func TestEmptySubtitlePlaylist_IsValidHLS(t *testing.T) {
 	}
 	if strings.Contains(empty, "#EXT-X-ENDLIST") {
 		t.Error("must NOT contain ENDLIST — player should keep polling for segments")
+	}
+}
+
+func TestUnsupportedContentReason(t *testing.T) {
+	// Mirrors the real chain: sentinel → Wrap in startLocked → returned
+	// through RunManager.Acquire / Session.Start unmodified.
+	wrapped := pkgerrors.Wrap(ErrResolutionNotSupported, "failed to get ffmpeg params")
+	if got := unsupportedContentReason(wrapped); got != ErrResolutionNotSupported.Error() {
+		t.Errorf("resolution: got %q, want %q", got, ErrResolutionNotSupported.Error())
+	}
+
+	disabled := pkgerrors.Wrap(ErrTranscodingDisabled, "failed to get ffmpeg params")
+	if got := unsupportedContentReason(disabled); got != ErrTranscodingDisabled.Error() {
+		t.Errorf("disabled: got %q, want %q", got, ErrTranscodingDisabled.Error())
+	}
+
+	// Internal failures must stay generic — no reason leaks to the client.
+	if got := unsupportedContentReason(pkgerrors.New("ffmpeg not found")); got != "" {
+		t.Errorf("internal error: got %q, want empty", got)
 	}
 }

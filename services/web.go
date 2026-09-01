@@ -193,6 +193,7 @@ type sessionCreateResponse struct {
 // @Param X-Source-Url header string false "Source media URL (takes priority over query param)"
 // @Success 200 {object} sessionCreateResponse
 // @Failure 400 {string} string "Missing or invalid source_url"
+// @Failure 415 {string} string "Source cannot be transcoded (resolution over 1080p or transcoding disabled)"
 // @Failure 500 {string} string "Internal error"
 // @Router /session [post]
 func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +266,11 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 	if err := sess.Start(0); err != nil {
 		s.sessionManager.Close(sess.id)
 		log.WithError(err).Error("session: failed to start ffmpeg")
-		http.Error(w, "failed to start transcoding", http.StatusInternalServerError)
+		if reason := unsupportedContentReason(err); reason != "" {
+			http.Error(w, reason, http.StatusUnsupportedMediaType)
+		} else {
+			http.Error(w, "failed to start transcoding", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -280,6 +285,18 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 	setCORSHeaders(w)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(resp)
+}
+
+// unsupportedContentReason returns the reason to surface to the client when
+// the source can never be transcoded by this deployment, or "" for transient
+// internal failures (which must stay generic to avoid leaking internals).
+func unsupportedContentReason(err error) string {
+	for _, e := range []error{ErrResolutionNotSupported, ErrTranscodingDisabled} {
+		if errors.Is(err, e) {
+			return e.Error()
+		}
+	}
+	return ""
 }
 
 // sessionRouter routes /session/{id}/... requests.
