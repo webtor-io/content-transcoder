@@ -189,3 +189,70 @@ func TestUnsupportedContentReason(t *testing.T) {
 		t.Errorf("internal error: got %q, want empty", got)
 	}
 }
+
+// Session URLs are stable across seeks — /session/{id}/v0-720-0.ts names
+// segment zero of whichever run the session currently points at — while the
+// bytes behind them change on every seek. Served without Cache-Control and
+// without ETag, browsers fall back to heuristic freshness (a fraction of the
+// file's age) and hand the player a segment from the previous run: seeking
+// anywhere replayed the movie from the start. Measured on production: the
+// same URL returned 1138528 bytes from cache while the server held 169012.
+func TestSessionSegmentHandler_RevalidatesCache(t *testing.T) {
+	dir := t.TempDir()
+	runMgr := NewRunManager()
+	defer runMgr.CloseAll()
+
+	sess := NewSession(SessionConfig{ID: "test-seg-cache", HashDir: dir, RunMgr: runMgr})
+	runDir := filepath.Join(dir, "runs", "seek-0.000")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	run := newTranscodeRun("test:seek:0.000", dir, 0, "", nil)
+	run.AddRef()
+	run.completed = true // segments already on disk, no FFmpeg needed
+	sess.run = run
+	if err := os.WriteFile(filepath.Join(runDir, "v0-720-0.ts"), []byte("segment-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	web := &Web{}
+	r := httptest.NewRequest(http.MethodGet, "/session/test-seg-cache/v0-720-0.ts", nil)
+	w := httptest.NewRecorder()
+	web.sessionSegmentHandler(w, r, sess, "v0-720-0.ts")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-cache")
+	}
+}
+
+// Playlists carry the same hazard and change even more often: a variant
+// playlist grows with every segment, and after a seek it is replaced wholesale.
+func TestSessionPlaylistHandler_RevalidatesCache(t *testing.T) {
+	dir := t.TempDir()
+	runMgr := NewRunManager()
+	defer runMgr.CloseAll()
+
+	sess := NewSession(SessionConfig{ID: "test-pl-cache", HashDir: dir, RunMgr: runMgr})
+	if err := os.MkdirAll(sess.outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sess.outputDir, "index.m3u8"),
+		[]byte("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv0-720.m3u8\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	web := &Web{}
+	r := httptest.NewRequest(http.MethodGet, "/session/test-pl-cache/index.m3u8", nil)
+	w := httptest.NewRecorder()
+	web.sessionPlaylistHandler(w, r, sess, "index.m3u8")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-cache")
+	}
+}

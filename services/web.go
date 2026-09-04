@@ -501,6 +501,9 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 	// references so subsequent requests carry the same auth context.
 	data = enrichPlaylistData(data, r.URL.RawQuery)
 
+	// Same reason as segments, and playlists move even faster: a variant grows
+	// with every segment produced and is replaced wholesale after a seek.
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Write(data)
@@ -555,6 +558,15 @@ func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess
 		http.Error(w, "segment timeout", http.StatusGatewayTimeout)
 		return
 	}
+
+	// A session URL outlives the run behind it: /session/{id}/v0-720-0.ts is
+	// "segment zero of whatever the session points at now", and a seek swaps
+	// the bytes without changing the name. With no Cache-Control and no ETag,
+	// browsers fall back to heuristic freshness and replay the previous run's
+	// segments — seeking anywhere restarted the movie from the beginning.
+	// no-cache still allows a conditional request: ServeFile answers an
+	// unchanged segment with a cheap 304 via Last-Modified.
+	w.Header().Set("Cache-Control", "no-cache")
 
 	// Serve the file
 	http.ServeFile(w, r, sess.SegmentPath(filename))
