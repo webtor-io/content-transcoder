@@ -37,6 +37,14 @@ type TranscodeRun struct {
 	done     chan struct{}
 	running  bool
 
+	// completed reports that FFmpeg walked the source to its end and exited
+	// cleanly. Such a run is finished, not dead: every segment it will ever
+	// produce is already on disk. Callers must not restart it — restarting
+	// rewrites the playlist from segment zero, which is what turned a 22h
+	// audiobook (copied in 5.5 minutes, 235x realtime) into a restart loop
+	// that ended in "transcoder restart limit reached".
+	completed bool
+
 	// lifecycle
 	runCtx    context.Context
 	runCancel context.CancelFunc
@@ -97,6 +105,9 @@ func (r *TranscodeRun) startLocked() error {
 	if r.running {
 		return nil
 	}
+	// A fresh process starts a fresh playlist, so any previous completion no
+	// longer describes what is on disk.
+	r.completed = false
 
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -167,6 +178,9 @@ func (r *TranscodeRun) startLocked() error {
 		if waitErr != nil {
 			r.logger.WithError(waitErr).Debug("run: ffmpeg exited with error")
 		} else {
+			r.mu.Lock()
+			r.completed = true
+			r.mu.Unlock()
 			r.logger.Info("run: ffmpeg finished normally")
 		}
 	}()
@@ -230,6 +244,15 @@ func (r *TranscodeRun) Cleanup() {
 		r.logger.WithError(err).Warn("run: failed to remove output dir")
 	}
 	r.logger.Info("run: cleaned up")
+}
+
+// IsCompleted reports whether FFmpeg finished the source cleanly. Distinct
+// from IsRunning: both are false for a run that was killed or released, and
+// only the completed one has a whole playlist behind it.
+func (r *TranscodeRun) IsCompleted() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.completed
 }
 
 // IsRunning returns true if FFmpeg is currently running.

@@ -277,6 +277,12 @@ func (s *Session) EnsureRunning() error {
 	if s.run != nil && s.run.IsRunning() {
 		return nil
 	}
+	// "Not running" is not the same as "died". A run that reached the end of
+	// the source has every segment on disk already; restarting it rewrites
+	// the playlist from zero and the player never gets a stable one to play.
+	if s.run != nil && s.run.IsCompleted() {
+		return nil
+	}
 	if s.restartFails >= maxConsecutiveRestarts {
 		return ErrRestartLimit
 	}
@@ -301,6 +307,11 @@ func (s *Session) RestartForSegment(segNum int) error {
 	if s.run != nil && s.run.IsRunning() {
 		return nil
 	}
+	// A segment missing behind a completed run is genuinely absent (past the
+	// end of the source), not evidence that FFmpeg needs restarting.
+	if s.run != nil && s.run.IsCompleted() {
+		return nil
+	}
 	if s.restartFails >= maxConsecutiveRestarts {
 		return ErrRestartLimit
 	}
@@ -317,6 +328,13 @@ func (s *Session) RestartForSegment(segNum int) error {
 	s.releaseRunLocked()
 
 	return s.acquireRunLocked()
+}
+
+// runIsCompleted reports whether the current run finished the source cleanly.
+func (s *Session) runIsCompleted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.run != nil && s.run.IsCompleted()
 }
 
 // runOutputDir returns the output directory of the current run, or empty string.
@@ -344,7 +362,14 @@ func (s *Session) PlaylistForStream(name string) ([]byte, error) {
 
 	content := string(data)
 	content = strings.Replace(content, "#EXT-X-ALLOW-CACHE:YES\n", "", 1)
-	content = strings.Replace(content, "#EXT-X-ENDLIST\n", "", 1)
+	// ENDLIST is stripped while FFmpeg is still producing so the player keeps
+	// polling for segments that do not exist yet. Once the run has finished
+	// the source, the opposite is true: without ENDLIST the playlist reads as
+	// live forever, and a player targeting the live edge of a stream that
+	// already ended never starts.
+	if !s.runIsCompleted() {
+		content = strings.Replace(content, "#EXT-X-ENDLIST\n", "", 1)
+	}
 
 	if !strings.Contains(content, "#EXT-X-PLAYLIST-TYPE:") {
 		content = strings.Replace(content, "#EXT-X-MEDIA-SEQUENCE:0\n",

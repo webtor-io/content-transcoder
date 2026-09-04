@@ -53,8 +53,11 @@ func (m *RunManager) Acquire(hashDir string, seekTime float64, sourceURL string,
 		mr.idleSince = time.Time{} // no longer idle
 		m.mu.Unlock()
 
-		// Ensure FFmpeg is running (may have been stopped by inactivity)
-		if !mr.run.IsRunning() {
+		// Ensure FFmpeg is running (may have been stopped by inactivity).
+		// A completed run is left alone: its segments are all on disk, and
+		// restarting it would truncate the playlist under viewers already
+		// watching it.
+		if !mr.run.IsRunning() && !mr.run.IsCompleted() {
 			if err := mr.run.Start(); err != nil {
 				m.Release(mr.run)
 				return nil, err
