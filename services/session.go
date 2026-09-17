@@ -251,6 +251,20 @@ func (s *Session) IsClosed() bool {
 	return s.closed
 }
 
+// RunStart is the movie time this session's media time 0 maps to: the
+// run's resolved real start (the keyframe a copy-mode seek landed on), or
+// the quantized seek time until a run exists to say better.
+func (s *Session) RunStart() float64 {
+	s.mu.Lock()
+	run := s.run
+	seek := s.seekTime
+	s.mu.Unlock()
+	if run != nil {
+		return run.RealStart()
+	}
+	return seek
+}
+
 // SeekTime returns the current quantized seek offset in seconds.
 func (s *Session) SeekTime() float64 {
 	s.mu.Lock()
@@ -384,11 +398,14 @@ func (s *Session) PlaylistForStream(name string) ([]byte, error) {
 
 	// Movie-time offset of segment 0 in this variant. Downstream proxies
 	// use this to compute movie_time per segment (offset + Σ EXTINF) without
-	// querying session state. Quantized to seekQuantum (see Session.Start).
-	// Players ignore unknown #EXT-X-* tags per HLS spec (RFC 8216 §3.1).
+	// querying session state. The run's real start, not the quantized seek:
+	// a copy-mode seek lands on the keyframe before the quantized point,
+	// and the difference (up to a GOP) is exactly the drift every consumer
+	// of this tag would inherit. Players ignore unknown #EXT-X-* tags per
+	// HLS spec (RFC 8216 §3.1).
 	if !strings.Contains(content, "#EXT-X-SESSION-OFFSET:") {
 		content = strings.Replace(content, "#EXTM3U\n",
-			fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.0f\n", s.seekTime), 1)
+			fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.3f\n", s.RunStart()), 1)
 	}
 
 	return []byte(content), nil

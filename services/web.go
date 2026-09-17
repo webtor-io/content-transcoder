@@ -379,13 +379,17 @@ func (s *Web) sessionSeekHandler(w http.ResponseWriter, r *http.Request, sess *S
 		return
 	}
 
+	// The offset the client must shift side-loaded subtitle cues by: the
+	// run's real start, which for a copy-mode video is the keyframe before
+	// the quantized point, not the quantized point itself. An old client
+	// ignores the field and keeps its own quantized guess.
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	fmt.Fprintf(w, `{"ok":true,"offset":%.3f}`, sess.RunStart())
 }
 
 // sessionSeekOffsetHandler handles GET /session/{id}/seek
 // @Summary Get current seek offset
-// @Description Returns the current quantized seek position of the session
+// @Description Returns the movie time this session's media time 0 maps to
 // @Tags session
 // @Produce json
 // @Param sessionId path string true "Session ID"
@@ -395,7 +399,7 @@ func (s *Web) sessionSeekHandler(w http.ResponseWriter, r *http.Request, sess *S
 func (s *Web) sessionSeekOffsetHandler(w http.ResponseWriter, r *http.Request, sess *Session) {
 	sess.Touch()
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"offset":%.3f}`, sess.SeekTime())
+	fmt.Fprintf(w, `{"offset":%.3f}`, sess.RunStart())
 }
 
 // sessionCloseHandler handles DELETE /session/{id}

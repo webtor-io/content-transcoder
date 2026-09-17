@@ -25,6 +25,15 @@ type TranscodeRun struct {
 	key       string  // identity: hashDir + ":seek:" + seekTime
 	hashDir   string
 	seekTime  float64
+	// realStart is the movie time media time 0 of this run actually maps
+	// to. For a copy-mode video the input seek lands on the keyframe at or
+	// before seekTime (-noaccurate_seek), so the run starts up to a GOP
+	// earlier than the quantized value; every side-loaded subtitle track
+	// shifted by the quantized offset then runs ahead of the sound by that
+	// difference (measured 1.657 s on stage). Resolved once per run by
+	// probeRunStart before FFmpeg is spawned; zero means "not resolved,
+	// use seekTime". Guarded by mu.
+	realStart float64
 	outputDir string // {hashDir}/runs/seek-{seekTime}/
 	sourceURL string
 	h         *HLS
@@ -126,10 +135,19 @@ func (r *TranscodeRun) startLocked() error {
 	params = redirectSegmentListParams(params)
 
 	if r.seekTime > 0 {
-		params = injectSeekParams(params, r.seekTime, r.isVideoCopy())
+		videoCopy := r.isVideoCopy()
+		params = injectSeekParams(params, r.seekTime, videoCopy)
 		// Remove -xerror when seeking: AVI and other containers may produce
 		// non-fatal errors during seek that -xerror would treat as fatal.
 		params = removeParam(params, "-xerror")
+		// Resolved before FFmpeg is spawned and before any playlist of this
+		// run can be served, so the offset the playlists report never
+		// changes mid-run: the subtitle-translate service treats an offset
+		// change as a new run. Once per run object; a restart of the same
+		// run starts from the same keyframe.
+		if videoCopy && r.realStart == 0 {
+			r.realStart = r.resolveRealStart()
+		}
 	}
 
 	r.ctx, r.cancel = context.WithCancel(r.runCtx)
@@ -275,6 +293,36 @@ func (r *TranscodeRun) OutputDir() string {
 }
 
 // isVideoCopy returns true if the primary video stream uses copy mode.
+// RealStart is the movie time this run's media time 0 maps to: the
+// keyframe an input seek with -noaccurate_seek actually landed on for a
+// copy-mode video, and the exact seek time everywhere else (re-encode uses
+// an accurate seek, and an unseeked run starts at zero).
+func (r *TranscodeRun) RealStart() float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.realStart > 0 {
+		return r.realStart
+	}
+	return r.seekTime
+}
+
+// resolveRealStart asks probeRunStart for the keyframe and falls back to
+// the quantized seek time on any answer that cannot be right: an error, a
+// keyframe after the seek point, or one implausibly far before it (a
+// broken index; 60 s is well past any GOP we transcode). Caller holds mu.
+func (r *TranscodeRun) resolveRealStart() float64 {
+	k, err := probeRunStart(r.runCtx, r.sourceURL, r.seekTime)
+	if err != nil {
+		r.logger.WithError(err).Warn("run: failed to resolve the real start, reporting the quantized seek")
+		return r.seekTime
+	}
+	if k < 0 || k > r.seekTime || r.seekTime-k > 60 {
+		r.logger.WithField("keyframe", fmt.Sprintf("%.3f", k)).Warn("run: implausible keyframe, reporting the quantized seek")
+		return r.seekTime
+	}
+	return k
+}
+
 func (r *TranscodeRun) isVideoCopy() bool {
 	if r.h == nil {
 		return false
