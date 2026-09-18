@@ -23,8 +23,8 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 	"github.com/urfave/cli"
 
-	_ "github.com/webtor-io/content-transcoder/docs"
 	cp "github.com/webtor-io/content-prober/content-prober"
+	_ "github.com/webtor-io/content-transcoder/docs"
 )
 
 const (
@@ -136,6 +136,10 @@ func (s *Web) buildHandler() {
 	mux.HandleFunc("/session", s.sessionCreateHandler)
 	mux.HandleFunc("/session/", s.sessionRouter)
 
+	// Pre-session routes still handed out by rest-api, see legacyPlaylistHandler.
+	mux.HandleFunc("/index.m3u8", s.legacyPlaylistHandler)
+	mux.HandleFunc("/index.json", s.legacyProbeHandler)
+
 	// Swagger UI at /swagger/
 	mux.Handle("/swagger/", httpSwagger.WrapHandler)
 
@@ -208,35 +212,64 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute hash dir (same sharding as before)
+	sess, code, msg := s.openSession(sourceURL)
+	if sess == nil {
+		http.Error(w, msg, code)
+		return
+	}
+
+	resp, err := json.Marshal(sessionCreateResponse{
+		ID:       sess.id,
+		Duration: sess.duration,
+	})
+	if err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		return
+	}
+	setCORSHeaders(w)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(resp)
+}
+
+// sourceHashDir maps a source URL to its output dir (sharded by the sha1 of
+// the URL path, as before the session API) and marks it active for the
+// external cleanup. On failure it returns the HTTP status and message to
+// answer with.
+func (s *Web) sourceHashDir(sourceURL string) (string, int, string) {
 	u, err := url.Parse(sourceURL)
 	if err != nil {
-		http.Error(w, "invalid source_url", http.StatusBadRequest)
-		return
+		return "", http.StatusBadRequest, "invalid source_url"
 	}
 	h := sha1.New()
 	h.Write([]byte(u.Path))
 	hash := hex.EncodeToString(h.Sum(nil))
 	hashDir, err := GetDir(s.output, hash)
 	if err != nil {
-		http.Error(w, "failed to get output dir", http.StatusInternalServerError)
-		return
+		return "", http.StatusInternalServerError, "failed to get output dir"
 	}
-
 	if err := os.MkdirAll(hashDir, 0755); err != nil {
-		http.Error(w, "failed to create output dir", http.StatusInternalServerError)
-		return
+		return "", http.StatusInternalServerError, "failed to create output dir"
 	}
-
 	// Touch hashDir so external cleanup knows it's active
 	_, _ = s.touchMap.Touch(hashDir)
+	return hashDir, http.StatusOK, ""
+}
+
+// openSession probes the source, creates a session and starts FFmpeg from
+// position 0. Shared by POST /session and the legacy GET /index.m3u8 route.
+// On failure the session is nil and the HTTP status and message to answer
+// with are returned.
+func (s *Web) openSession(sourceURL string) (*Session, int, string) {
+	hashDir, code, msg := s.sourceHashDir(sourceURL)
+	if code != http.StatusOK {
+		return nil, code, msg
+	}
 
 	// Probe media
 	pr, err := s.contentProbe.Get(sourceURL, hashDir)
 	if err != nil {
 		log.WithError(err).Error("session: failed to probe media")
-		http.Error(w, "failed to probe media", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, "failed to probe media"
 	}
 
 	duration := getDuration(pr)
@@ -253,13 +286,11 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 	// Create session directory and write master playlist
 	if err := os.MkdirAll(sess.outputDir, 0755); err != nil {
 		s.sessionManager.Close(sess.id)
-		http.Error(w, "failed to create session dir", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, "failed to create session dir"
 	}
 	if err := hls.MakeMasterPlaylist(sess.outputDir); err != nil {
 		s.sessionManager.Close(sess.id)
-		http.Error(w, "failed to create master playlist", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, "failed to create master playlist"
 	}
 
 	// Start FFmpeg from 0
@@ -267,24 +298,101 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 		s.sessionManager.Close(sess.id)
 		log.WithError(err).Error("session: failed to start ffmpeg")
 		if reason := unsupportedContentReason(err); reason != "" {
-			http.Error(w, reason, http.StatusUnsupportedMediaType)
-		} else {
-			http.Error(w, "failed to start transcoding", http.StatusInternalServerError)
+			return nil, http.StatusUnsupportedMediaType, reason
 		}
-		return
+		return nil, http.StatusInternalServerError, "failed to start transcoding"
 	}
 
-	resp, err := json.Marshal(sessionCreateResponse{
-		ID:       sess.id,
-		Duration: duration,
-	})
+	return sess, http.StatusOK, ""
+}
+
+// Legacy routes. Before the session API (76cc495, 2026-03) a stream was
+// addressed as GET /index.m3u8 (master playlist, transcoding started on the
+// first hit) and GET /index.json (the ffprobe output), and rest-api still
+// hands exactly those URLs to public-API consumers (`export` types `stream`
+// and `media_probe`). After the refactor the default mux answered them with
+// "404 page not found" for six months.
+//
+// legacyPlaylistHandler handles GET /index.m3u8: opens a session and
+// redirects to its master playlist. The Location is RELATIVE ON PURPOSE.
+// The request reaches this service through torrent-http-proxy as
+// .../<file>~hls/index.m3u8; only a path without a leading slash resolves on
+// the client to .../<file>~hls/session/<id>/index.m3u8, which the proxy
+// forwards here as /session/<id>/index.m3u8. An absolute /session/... would
+// point at the proxy's root. The query (api-key, token) is carried along the
+// same way the session playlists carry it into their segment URLs.
+func (s *Web) legacyPlaylistHandler(w http.ResponseWriter, r *http.Request) {
+	setCORSHeaders(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sourceURL := getSourceURL(r)
+	if sourceURL == "" {
+		http.Error(w, "missing source_url", http.StatusBadRequest)
+		return
+	}
+	sess, code, msg := s.openSession(sourceURL)
+	if sess == nil {
+		http.Error(w, msg, code)
+		return
+	}
+	w.Header().Set("Location", legacyPlaylistLocation(sess.id, r.URL.RawQuery))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusFound)
+}
+
+// legacyPlaylistLocation builds the relative redirect target for a session's
+// master playlist, keeping the request query.
+func legacyPlaylistLocation(sessionID string, rawQuery string) string {
+	loc := "session/" + sessionID + "/index.m3u8"
+	if rawQuery != "" {
+		loc += "?" + rawQuery
+	}
+	return loc
+}
+
+// legacyProbeHandler handles GET /index.json: answers the probe of the
+// source, the same ffprobe JSON the old route served from the output dir
+// (ContentProbe still caches it there under that very name). No session is
+// opened and no FFmpeg is started.
+func (s *Web) legacyProbeHandler(w http.ResponseWriter, r *http.Request) {
+	setCORSHeaders(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sourceURL := getSourceURL(r)
+	if sourceURL == "" {
+		http.Error(w, "missing source_url", http.StatusBadRequest)
+		return
+	}
+	hashDir, code, msg := s.sourceHashDir(sourceURL)
+	if code != http.StatusOK {
+		http.Error(w, msg, code)
+		return
+	}
+	pr, err := s.contentProbe.Get(sourceURL, hashDir)
+	if err != nil {
+		log.WithError(err).Error("legacy probe: failed to probe media")
+		http.Error(w, "failed to probe media", http.StatusInternalServerError)
+		return
+	}
+	body, err := json.Marshal(pr)
 	if err != nil {
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 		return
 	}
-	setCORSHeaders(w)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(resp)
+	w.Write(body)
 }
 
 // unsupportedContentReason returns the reason to surface to the client when

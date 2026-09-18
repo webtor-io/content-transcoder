@@ -256,3 +256,51 @@ func TestSessionPlaylistHandler_RevalidatesCache(t *testing.T) {
 		t.Errorf("Cache-Control = %q, want %q", got, "no-cache")
 	}
 }
+
+// The legacy /index.m3u8 redirect must be relative (it is reached through
+// torrent-http-proxy under .../<file>~hls/, and an absolute /session/... would
+// escape that prefix) and must keep the request query, which carries the
+// api-key/token the proxy checks on every playlist and segment.
+func TestLegacyPlaylistLocation(t *testing.T) {
+	if got := legacyPlaylistLocation("abc", ""); got != "session/abc/index.m3u8" {
+		t.Errorf("location = %q, want relative session path", got)
+	}
+	if got := legacyPlaylistLocation("abc", "api-key=k&token=t"); got != "session/abc/index.m3u8?api-key=k&token=t" {
+		t.Errorf("location = %q, query must be preserved", got)
+	}
+	if strings.HasPrefix(legacyPlaylistLocation("abc", ""), "/") {
+		t.Error("location must not start with a slash")
+	}
+}
+
+// The legacy routes are registered (the default mux 404 is what broke the
+// public API for six months) and reject a request without a source before
+// touching any session state.
+func TestLegacyRoutes_Registered_RequireSource(t *testing.T) {
+	web := &Web{}
+	web.buildHandler()
+
+	for _, path := range []string{"/index.m3u8", "/index.json"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		web.handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("GET %s without source: status = %d, want 400 (body %q)", path, w.Code, w.Body.String())
+		}
+
+		r = httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("X-Source-Url", "://not a url")
+		w = httptest.NewRecorder()
+		web.handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("GET %s with unparsable source: status = %d, want 400 (body %q)", path, w.Code, w.Body.String())
+		}
+
+		r = httptest.NewRequest(http.MethodPost, path, nil)
+		w = httptest.NewRecorder()
+		web.handler.ServeHTTP(w, r)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s: status = %d, want 405", path, w.Code)
+		}
+	}
+}
