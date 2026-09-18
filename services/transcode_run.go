@@ -25,15 +25,26 @@ type TranscodeRun struct {
 	key       string  // identity: hashDir + ":seek:" + seekTime
 	hashDir   string
 	seekTime  float64
+	// onRealStart, when set, reports a freshly resolved real start to the
+	// run manager, which remembers it per key: the manager reaps idle runs
+	// out from under 10-minute sessions, and a re-created run must report
+	// the same offset — not re-probe and, on a cold source, fall back to
+	// the quantized value, moving the playlist tag mid-session.
+	onRealStart func(key string, v float64)
 	// realStart is the movie time media time 0 of this run actually maps
 	// to. For a copy-mode video the input seek lands on the keyframe at or
 	// before seekTime (-noaccurate_seek), so the run starts up to a GOP
 	// earlier than the quantized value; every side-loaded subtitle track
 	// shifted by the quantized offset then runs ahead of the sound by that
 	// difference (measured 1.657 s on stage). Resolved once per run by
-	// probeRunStart before FFmpeg is spawned; zero means "not resolved,
-	// use seekTime". Guarded by mu.
-	realStart float64
+	// probeRunStart before FFmpeg is spawned. A separate resolved flag, not
+	// a zero sentinel: 0.000 is a real answer (a file whose only keyframe
+	// before a 30 s seek is the first frame), and reading it as "not
+	// resolved" would report the quantized seek exactly there. Guarded by
+	// mu; written only through resolveRealStartOnce.
+	realStart         float64
+	realStartResolved bool
+	realStartOnce     sync.Once
 	outputDir string // {hashDir}/runs/seek-{seekTime}/
 	sourceURL string
 	h         *HLS
@@ -105,9 +116,40 @@ func (r *TranscodeRun) RefCount() int {
 
 // Start starts FFmpeg if not already running.
 func (r *TranscodeRun) Start() error {
+	// Before the lock: the probe shells out for up to 5 s, and r.mu is what
+	// AddRef/RefCount take — the run manager holds its own global lock
+	// across both, so a probe under r.mu stalled every Acquire and the
+	// reaper (i.e. every session in the pod) for the probe's duration.
+	r.resolveRealStartOnce()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.startLocked()
+}
+
+// resolveRealStartOnce resolves the run's real start exactly once per run
+// object, without holding r.mu across the probe. Everything it reads
+// (seekTime, sourceURL, h, runCtx) is immutable after construction. It
+// runs on Start rather than on construction so a run preset from the
+// manager's memory (see RunManager.Acquire) never probes at all — the
+// offset a key once reported must not move when the run object is
+// re-created, or every consumer of the playlist tag sees a new run.
+func (r *TranscodeRun) resolveRealStartOnce() {
+	r.realStartOnce.Do(func() {
+		r.mu.Lock()
+		done := r.realStartResolved
+		r.mu.Unlock()
+		if done || r.seekTime <= 0 || !r.isVideoCopy() {
+			return
+		}
+		k := r.resolveRealStart()
+		r.mu.Lock()
+		r.realStart = k
+		r.realStartResolved = true
+		r.mu.Unlock()
+		if r.onRealStart != nil {
+			r.onRealStart(r.key, k)
+		}
+	})
 }
 
 func (r *TranscodeRun) startLocked() error {
@@ -135,19 +177,10 @@ func (r *TranscodeRun) startLocked() error {
 	params = redirectSegmentListParams(params)
 
 	if r.seekTime > 0 {
-		videoCopy := r.isVideoCopy()
-		params = injectSeekParams(params, r.seekTime, videoCopy)
+		params = injectSeekParams(params, r.seekTime, r.isVideoCopy())
 		// Remove -xerror when seeking: AVI and other containers may produce
 		// non-fatal errors during seek that -xerror would treat as fatal.
 		params = removeParam(params, "-xerror")
-		// Resolved before FFmpeg is spawned and before any playlist of this
-		// run can be served, so the offset the playlists report never
-		// changes mid-run: the subtitle-translate service treats an offset
-		// change as a new run. Once per run object; a restart of the same
-		// run starts from the same keyframe.
-		if videoCopy && r.realStart == 0 {
-			r.realStart = r.resolveRealStart()
-		}
 	}
 
 	r.ctx, r.cancel = context.WithCancel(r.runCtx)
@@ -300,7 +333,7 @@ func (r *TranscodeRun) OutputDir() string {
 func (r *TranscodeRun) RealStart() float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.realStart > 0 {
+	if r.realStartResolved {
 		return r.realStart
 	}
 	return r.seekTime

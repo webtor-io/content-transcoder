@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	cp "github.com/webtor-io/content-prober/content-prober"
 )
 
 func TestParseFirstPacketTime(t *testing.T) {
@@ -65,8 +66,17 @@ func TestRealStartFallsBackToSeekTime(t *testing.T) {
 		t.Fatalf("unresolved: %v", got)
 	}
 	run.realStart = 598.343
+	run.realStartResolved = true
 	if got := run.RealStart(); got != 598.343 {
 		t.Fatalf("resolved: %v", got)
+	}
+	// 0.000 is a real answer (the only keyframe before a short seek is the
+	// first frame), not the "unresolved" sentinel.
+	run2 := newTranscodeRun("k2", t.TempDir(), 30, "http://src", nil)
+	run2.realStart = 0
+	run2.realStartResolved = true
+	if got := run2.RealStart(); got != 0 {
+		t.Fatalf("a resolved keyframe at zero must be reported as zero, got %v", got)
 	}
 }
 
@@ -85,6 +95,7 @@ func TestPlaylistCarriesTheRealStart(t *testing.T) {
 	run := newTranscodeRun("k", dir, 1500, "", nil)
 	run.outputDir = runDir
 	run.realStart = 1495.5
+	run.realStartResolved = true
 	run.AddRef()
 	s.run = run
 
@@ -99,5 +110,64 @@ func TestPlaylistCarriesTheRealStart(t *testing.T) {
 	}
 	if !containsStr(string(got), "#EXT-X-SESSION-OFFSET:1495.500\n") {
 		t.Fatalf("want the run's real start in the tag, got:\n%s", got)
+	}
+}
+
+// TestResolvedStartSurvivesTheRunObject: the reaper deletes idle runs out
+// from under 10-minute sessions; a re-created run for the same key must
+// report the offset the first one resolved, not re-probe (a cold source
+// fails the probe and the fallback would move the playlist tag mid-session,
+// which every consumer reads as a new run). The session-level fallback
+// (Session.RunStart with no run at all) reads the same memory.
+func TestResolvedStartSurvivesTheRunObject(t *testing.T) {
+	orig := probeRunStart
+	t.Cleanup(func() { probeRunStart = orig })
+	probes := 0
+	probeRunStart = func(context.Context, string, float64) (float64, error) {
+		probes++
+		return 598.343, nil
+	}
+	dir := t.TempDir()
+	m := NewRunManager()
+	defer m.CloseAll()
+	// A copy-mode video: h264 in, so GetCodecParams answers "copy" and the
+	// probe gate opens. proto getters are nil-safe for the rest.
+	h := &HLS{primary: []*HLSStream{NewHLSStream(0, Video, &cp.Stream{CodecName: "h264"}, nil, nil, false)}}
+	key := runKey(dir, 600)
+
+	m.mu.Lock()
+	r1 := m.newRunLocked(key, dir, 600, "http://src/x.mkv", h)
+	m.mu.Unlock()
+	r1.resolveRealStartOnce()
+	if got := r1.RealStart(); got != 598.343 || probes != 1 {
+		t.Fatalf("first run resolves once: got %v after %d probes", got, probes)
+	}
+	if v, ok := m.ResolvedStart(dir, 600); !ok || v != 598.343 {
+		t.Fatalf("the manager must remember what the run reported: %v %v", v, ok)
+	}
+
+	// The run object is gone (reaped); the next one is preset and must not
+	// probe — the stub would now fail and fall back to 600.
+	probeRunStart = func(context.Context, string, float64) (float64, error) {
+		probes++
+		return 0, errors.New("source went cold")
+	}
+	m.mu.Lock()
+	r2 := m.newRunLocked(key, dir, 600, "http://src/x.mkv", h)
+	m.mu.Unlock()
+	r2.resolveRealStartOnce()
+	if got := r2.RealStart(); got != 598.343 {
+		t.Fatalf("the re-created run must report the remembered start, got %v", got)
+	}
+	if probes != 1 {
+		t.Fatalf("a preset run must not probe, got %d probes", probes)
+	}
+
+	// And a session whose run is momentarily absent answers from the same
+	// memory rather than the quantized seek.
+	s := NewSession(SessionConfig{ID: "s", HashDir: dir, RunMgr: m})
+	s.seekTime = 600
+	if got := s.RunStart(); got != 598.343 {
+		t.Fatalf("session fallback must use the remembered start, got %v", got)
 	}
 }

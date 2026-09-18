@@ -25,7 +25,14 @@ var probeRunStart = ffprobeRunStart
 // -read_intervals seeks the way FFmpeg's own input seek does (backward, to
 // the keyframe at or before the position, via the container index), so the
 // first packet it reports is the keyframe the run will start from — one
-// index read plus one packet, not a decode.
+// index read plus one packet, not a decode. Measured against the
+// production image: for mkv and mp4 the answer equals the run's media
+// time 0 for video, audio and the webvtt subtitle output; for mpegts the
+// premise does not hold (the run starts elsewhere) and the guards below
+// cannot tell — the quantized value was equally wrong there before, so
+// this is a known limit, not a proof. Cost: ~4 range reads against the
+// seeder (open, tail index, seek area) — the same reads the run itself is
+// about to do, so warm in the common case.
 func ffprobeRunStart(ctx context.Context, sourceURL string, seek float64) (float64, error) {
 	ffprobePath, err := exec.LookPath("ffprobe")
 	if err != nil {
@@ -33,8 +40,16 @@ func ffprobeRunStart(ctx context.Context, sourceURL string, seek float64) (float
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeRunStartTimeout)
 	defer cancel()
+	// The URL comes from a request header; it has already been through the
+	// session's own validation and is handed to FFmpeg as-is, but ffprobe
+	// gets a protocol whitelist and an explicit non-option guard anyway —
+	// they cost nothing and close the "URL that parses as a flag" shape.
+	if strings.HasPrefix(sourceURL, "-") {
+		return 0, errors.New("source url cannot start with a dash")
+	}
 	cmd := exec.CommandContext(ctx, ffprobePath,
 		"-v", "error",
+		"-protocol_whitelist", "http,https,tcp,tls",
 		"-select_streams", "v:0",
 		"-show_entries", "packet=pts_time,dts_time",
 		"-of", "csv=p=0",

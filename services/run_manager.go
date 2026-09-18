@@ -19,8 +19,12 @@ const (
 type RunManager struct {
 	mu   sync.Mutex
 	runs map[string]*managedRun
-	done chan struct{}
-	closed bool
+	// realStarts remembers, per run key, the real start a run once
+	// reported (see rememberRealStart): the offset a key answers must
+	// survive the run object being reaped.
+	realStarts map[string]float64
+	done       chan struct{}
+	closed     bool
 }
 
 type managedRun struct {
@@ -30,8 +34,9 @@ type managedRun struct {
 
 func NewRunManager() *RunManager {
 	m := &RunManager{
-		runs: make(map[string]*managedRun),
-		done: make(chan struct{}),
+		runs:       make(map[string]*managedRun),
+		realStarts: make(map[string]float64),
+		done:       make(chan struct{}),
 	}
 	go m.reaper()
 	return m
@@ -44,6 +49,44 @@ func runKey(hashDir string, seekTime float64) string {
 // Acquire returns an existing run or creates a new one.
 // The returned run has its refCount incremented.
 // If the run is new, FFmpeg is started automatically.
+// ResolvedStart is the real start a run for this (hashDir, seekTime) once
+// reported, if any run on this pod has resolved one.
+func (m *RunManager) ResolvedStart(hashDir string, seekTime float64) (float64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.realStarts[runKey(hashDir, seekTime)]
+	return v, ok
+}
+
+func (m *RunManager) rememberRealStart(key string, v float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// A cap, not an LRU: entries are 16 bytes and a pod restarts on every
+	// deploy, but an unbounded map keyed by every (hash, seek) ever played
+	// is still a leak by shape.
+	if len(m.realStarts) > 8192 {
+		m.realStarts = map[string]float64{}
+	}
+	m.realStarts[key] = v
+}
+
+// newRunLocked builds a run wired into this manager's real-start memory:
+// it reports what it resolves (rememberRealStart), and it starts preset
+// with the offset this key once reported, surviving the run object — the
+// reaper deletes idle runs under 10-minute sessions, and a re-created run
+// must not re-probe: a probe against a source gone cold falls back to the
+// quantized seek, and the playlist tag moving mid-session reads as a new
+// run to every consumer. Caller holds m.mu.
+func (m *RunManager) newRunLocked(key, hashDir string, seekTime float64, sourceURL string, h *HLS) *TranscodeRun {
+	run := newTranscodeRun(key, hashDir, seekTime, sourceURL, h)
+	run.onRealStart = m.rememberRealStart
+	if v, ok := m.realStarts[key]; ok {
+		run.realStart = v
+		run.realStartResolved = true
+	}
+	return run
+}
+
 func (m *RunManager) Acquire(hashDir string, seekTime float64, sourceURL string, h *HLS) (*TranscodeRun, error) {
 	key := runKey(hashDir, seekTime)
 
@@ -72,7 +115,7 @@ func (m *RunManager) Acquire(hashDir string, seekTime float64, sourceURL string,
 	}
 
 	// Create new run
-	run := newTranscodeRun(key, hashDir, seekTime, sourceURL, h)
+	run := m.newRunLocked(key, hashDir, seekTime, sourceURL, h)
 	run.AddRef()
 	m.runs[key] = &managedRun{run: run}
 	m.mu.Unlock()
@@ -148,15 +191,34 @@ func (m *RunManager) reaper() {
 }
 
 func (m *RunManager) cleanupIdleRuns() {
+	// Snapshot under m.mu, count references outside it: RefCount takes the
+	// run's own mutex, and holding the manager-wide lock across a run
+	// mutex means one slow run operation stalls every Acquire/Release in
+	// the pod for its duration.
 	m.mu.Lock()
-	var toCleanup []*TranscodeRun
+	candidates := make(map[string]*managedRun, len(m.runs))
 	for key, mr := range m.runs {
-		if mr.run.RefCount() <= 0 && !mr.idleSince.IsZero() && time.Since(mr.idleSince) > runGracePeriod {
-			toCleanup = append(toCleanup, mr.run)
-			delete(m.runs, key)
+		if !mr.idleSince.IsZero() && time.Since(mr.idleSince) > runGracePeriod {
+			candidates[key] = mr
 		}
 	}
 	m.mu.Unlock()
+
+	var toCleanup []*TranscodeRun
+	for key, mr := range candidates {
+		if mr.run.RefCount() > 0 {
+			continue
+		}
+		m.mu.Lock()
+		// Re-checked under the lock: an Acquire may have taken the run
+		// back between the count and here — idleSince is zeroed there, so
+		// a re-acquired run never passes.
+		if cur, ok := m.runs[key]; ok && cur == mr && !mr.idleSince.IsZero() && time.Since(mr.idleSince) > runGracePeriod && mr.run.RefCount() <= 0 {
+			toCleanup = append(toCleanup, mr.run)
+			delete(m.runs, key)
+		}
+		m.mu.Unlock()
+	}
 
 	for _, run := range toCleanup {
 		log.WithField("runKey", run.key).Info("runManager: cleaning up idle run")

@@ -446,7 +446,11 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 		// proxies can compute per-segment movie_time without session-state
 		// lookups. Variant playlists also carry this tag (see PlaylistForStream).
 		if !bytes.Contains(data, []byte("#EXT-X-SESSION-OFFSET:")) {
-			tag := fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.0f\n", sess.SeekTime())
+			// The same value the variants carry: a master tagged with the
+			// quantized seek while the variants say the real start is a
+			// trap for the next consumer (today none reads it off the
+			// master's tag — it has no segments to time).
+			tag := fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.3f\n", sess.RunStart())
 			data = bytes.Replace(data, []byte("#EXTM3U\n"), []byte(tag), 1)
 		}
 	} else {

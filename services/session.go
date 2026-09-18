@@ -258,9 +258,20 @@ func (s *Session) RunStart() float64 {
 	s.mu.Lock()
 	run := s.run
 	seek := s.seekTime
+	mgr := s.runMgr
+	dir := s.hashDir
 	s.mu.Unlock()
 	if run != nil {
 		return run.RealStart()
+	}
+	// No run right now (the 60 s inactivity release): the manager still
+	// remembers what a run for this key reported. Without this, the seek
+	// GET a player does at mount answered the quantized value for an idle
+	// session — the very number this offset exists to replace.
+	if mgr != nil {
+		if v, ok := mgr.ResolvedStart(dir, seek); ok {
+			return v
+		}
 	}
 	return seek
 }
@@ -353,6 +364,11 @@ func (s *Session) runIsCompleted() bool {
 
 // runOutputDir returns the output directory of the current run, or empty string.
 func (s *Session) runOutputDir() string {
+	// Under s.mu: Seek and the inactivity release write s.run, and every
+	// playlist request reads it here (a pre-existing unsynchronized read,
+	// noted in review 2026-09-18).
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.run != nil {
 		return s.run.OutputDir()
 	}
