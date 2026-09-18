@@ -212,7 +212,7 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, code, msg := s.openSession(sourceURL)
+	sess, code, msg := s.openSession(sourceURL, true)
 	if sess == nil {
 		http.Error(w, msg, code)
 		return
@@ -255,11 +255,12 @@ func (s *Web) sourceHashDir(sourceURL string) (string, int, string) {
 	return hashDir, http.StatusOK, ""
 }
 
-// openSession probes the source, creates a session and starts FFmpeg from
-// position 0. Shared by POST /session and the legacy GET /index.m3u8 route.
-// On failure the session is nil and the HTTP status and message to answer
-// with are returned.
-func (s *Web) openSession(sourceURL string) (*Session, int, string) {
+// openSession probes the source, creates a session and, when start is set,
+// starts FFmpeg from position 0. Shared by POST /session (start) and the
+// legacy GET /index.m3u8 route (no start: most of its callers only want the
+// master, see legacyPlaylistHandler). On failure the session is nil and the
+// HTTP status and message to answer with are returned.
+func (s *Web) openSession(sourceURL string, start bool) (*Session, int, string) {
 	hashDir, code, msg := s.sourceHashDir(sourceURL)
 	if code != http.StatusOK {
 		return nil, code, msg
@@ -293,6 +294,10 @@ func (s *Web) openSession(sourceURL string) (*Session, int, string) {
 		return nil, http.StatusInternalServerError, "failed to create master playlist"
 	}
 
+	if !start {
+		return sess, http.StatusOK, ""
+	}
+
 	// Start FFmpeg from 0
 	if err := sess.Start(0); err != nil {
 		s.sessionManager.Close(sess.id)
@@ -313,14 +318,17 @@ func (s *Web) openSession(sourceURL string) (*Session, int, string) {
 // and `media_probe`). After the refactor the default mux answered them with
 // "404 page not found" for six months.
 //
-// legacyPlaylistHandler handles GET /index.m3u8: opens a session and
-// redirects to its master playlist. The Location is RELATIVE ON PURPOSE.
-// The request reaches this service through torrent-http-proxy as
-// .../<file>~hls/index.m3u8; only a path without a leading slash resolves on
-// the client to .../<file>~hls/session/<id>/index.m3u8, which the proxy
-// forwards here as /session/<id>/index.m3u8. An absolute /session/... would
-// point at the proxy's root. The query (api-key, token) is carried along the
-// same way the session playlists carry it into their segment URLs.
+// legacyPlaylistHandler handles GET /index.m3u8: opens a session and serves
+// its master playlist right away, with every playlist reference prefixed
+// with session/<id>/. Inline, not a redirect: torrent-http-proxy follows
+// 302s from its edges itself (redirectFollowingTransport) and would either
+// choke on a relative Location or hand the client a master whose relative
+// references resolve outside the session. The prefix is relative on
+// purpose — through the proxy the request is .../<file>~hls/index.m3u8, so
+// session/<id>/v0-720.m3u8 resolves to .../<file>~hls/session/<id>/…, which
+// the proxy forwards here as /session/<id>/v0-720.m3u8; from there the
+// variant and segment references are relative to the session as usual. The
+// query (api-key, token) is appended like on every session playlist.
 func (s *Web) legacyPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 	setCORSHeaders(w)
 	if r.Method == http.MethodOptions {
@@ -331,29 +339,60 @@ func (s *Web) legacyPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// rest-api's CacheMap asks index.m3u8?done=true on every stream URL it
+	// mints and reads a 200 as "the transcode is cached" (transcode_cache
+	// in the export meta). Nothing has been pre-transcoded since the
+	// session API; the answer stays the 404 it has been, or every export
+	// claims a cache that does not exist and players skip the warmup
+	// (2026-09-18 incident). 12k such probes a day — no session for them.
+	if r.URL.Query().Get("done") == "true" {
+		http.NotFound(w, r)
+		return
+	}
 	sourceURL := getSourceURL(r)
 	if sourceURL == "" {
 		http.Error(w, "missing source_url", http.StatusBadRequest)
 		return
 	}
-	sess, code, msg := s.openSession(sourceURL)
+	// No FFmpeg here: the callers of this route are mostly probes and
+	// crawlers that never read a variant, and a run nobody reads goes idle
+	// and races the cleanup against real sessions on the same source. The
+	// run starts on the first variant request (Session.EnsureRunning).
+	sess, code, msg := s.openSession(sourceURL, false)
 	if sess == nil {
 		http.Error(w, msg, code)
 		return
 	}
-	w.Header().Set("Location", legacyPlaylistLocation(sess.id, r.URL.RawQuery))
+	data, err := sessionMasterPlaylist(sess)
+	if err != nil {
+		http.Error(w, "master playlist not found", http.StatusNotFound)
+		return
+	}
+	data = prefixPlaylistRefs(data, "session/"+sess.id+"/")
+	data = enrichPlaylistData(data, r.URL.RawQuery)
+	// Every hit opens a session, so the answer is specific to it.
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusFound)
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	w.Write(data)
 }
 
-// legacyPlaylistLocation builds the relative redirect target for a session's
-// master playlist, keeping the request query.
-func legacyPlaylistLocation(sessionID string, rawQuery string) string {
-	loc := "session/" + sessionID + "/index.m3u8"
-	if rawQuery != "" {
-		loc += "?" + rawQuery
+// prefixPlaylistRefs puts prefix in front of every segment and playlist
+// reference in an HLS playlist (bare lines and URI="…" attributes alike);
+// tags and comments are left as they are.
+func prefixPlaylistRefs(data []byte, prefix string) []byte {
+	if prefix == "" {
+		return data
 	}
-	return loc
+	var sb strings.Builder
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = playlistFilePattern.ReplaceAllString(line, prefix+"$0")
+		sb.WriteString(line)
+		sb.WriteRune('\n')
+	}
+	return []byte(sb.String())
 }
 
 // legacyProbeHandler handles GET /index.json: answers the probe of the
@@ -536,6 +575,25 @@ func (s *Web) sessionCloseHandler(w http.ResponseWriter, r *http.Request, sess *
 // @Failure 404 {string} string "Session or playlist not found"
 // @Failure 504 {string} string "Timeout waiting for playlist"
 // @Router /session/{sessionId}/{stream}.m3u8 [get]
+// sessionMasterPlaylist reads the session's master playlist from disk and
+// tags it with the movie-time offset of the session so downstream proxies
+// can compute per-segment movie_time without session-state lookups. Variant
+// playlists carry the same tag (see PlaylistForStream): a master tagged with
+// the quantized seek while the variants say the real start would be a trap
+// for the next consumer (today none reads it off the master — it has no
+// segments to time).
+func sessionMasterPlaylist(sess *Session) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(sess.outputDir, "index.m3u8"))
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Contains(data, []byte("#EXT-X-SESSION-OFFSET:")) {
+		tag := fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.3f\n", sess.RunStart())
+		data = bytes.Replace(data, []byte("#EXTM3U\n"), []byte(tag), 1)
+	}
+	return data, nil
+}
+
 func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, sess *Session, name string) {
 	sess.Touch()
 
@@ -543,23 +601,10 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 	var err error
 
 	if name == "index.m3u8" {
-		// Serve master playlist directly from disk
-		data, err = os.ReadFile(filepath.Join(sess.outputDir, "index.m3u8"))
+		data, err = sessionMasterPlaylist(sess)
 		if err != nil {
 			http.Error(w, "master playlist not found", http.StatusNotFound)
 			return
-		}
-
-		// Tag master with movie-time offset of this session so downstream
-		// proxies can compute per-segment movie_time without session-state
-		// lookups. Variant playlists also carry this tag (see PlaylistForStream).
-		if !bytes.Contains(data, []byte("#EXT-X-SESSION-OFFSET:")) {
-			// The same value the variants carry: a master tagged with the
-			// quantized seek while the variants say the real start is a
-			// trap for the next consumer (today none reads it off the
-			// master's tag — it has no segments to time).
-			tag := fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.3f\n", sess.RunStart())
-			data = bytes.Replace(data, []byte("#EXTM3U\n"), []byte(tag), 1)
 		}
 	} else {
 		// Ensure FFmpeg is running (may have been released due to inactivity)

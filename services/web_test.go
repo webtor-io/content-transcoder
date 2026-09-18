@@ -257,19 +257,28 @@ func TestSessionPlaylistHandler_RevalidatesCache(t *testing.T) {
 	}
 }
 
-// The legacy /index.m3u8 redirect must be relative (it is reached through
-// torrent-http-proxy under .../<file>~hls/, and an absolute /session/... would
-// escape that prefix) and must keep the request query, which carries the
-// api-key/token the proxy checks on every playlist and segment.
-func TestLegacyPlaylistLocation(t *testing.T) {
-	if got := legacyPlaylistLocation("abc", ""); got != "session/abc/index.m3u8" {
-		t.Errorf("location = %q, want relative session path", got)
+// The legacy /index.m3u8 answer is the session's master with every
+// reference moved under session/<id>/ — relative (through torrent-http-proxy
+// the request lives under .../<file>~hls/) and with the query kept, which
+// carries the api-key/token the proxy checks on every playlist and segment.
+func TestPrefixPlaylistRefs_MasterUnderSession(t *testing.T) {
+	master := "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nv0-720.m3u8\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"a0.m3u8\"\n"
+	got := string(enrichPlaylistData(prefixPlaylistRefs([]byte(master), "session/abc/"), "api-key=k&token=t"))
+
+	if !strings.Contains(got, "\nsession/abc/v0-720.m3u8?api-key=k&token=t\n") {
+		t.Errorf("variant must move under the session and keep the query, got:\n%s", got)
 	}
-	if got := legacyPlaylistLocation("abc", "api-key=k&token=t"); got != "session/abc/index.m3u8?api-key=k&token=t" {
-		t.Errorf("location = %q, query must be preserved", got)
+	if !strings.Contains(got, "URI=\"session/abc/a0.m3u8?api-key=k&token=t\"") {
+		t.Errorf("URI attribute must move under the session, got:\n%s", got)
 	}
-	if strings.HasPrefix(legacyPlaylistLocation("abc", ""), "/") {
-		t.Error("location must not start with a slash")
+	if strings.Contains(got, "/session/") {
+		t.Errorf("references must stay relative (no leading slash), got:\n%s", got)
+	}
+	if !strings.Contains(got, "#EXT-X-SESSION-OFFSET:0.000\n") || !strings.Contains(got, "#EXT-X-STREAM-INF:BANDWIDTH=5000000\n") {
+		t.Errorf("tags must be untouched, got:\n%s", got)
+	}
+	if string(prefixPlaylistRefs([]byte(master), "")) != master {
+		t.Error("empty prefix must return the playlist unchanged")
 	}
 }
 
@@ -302,5 +311,21 @@ func TestLegacyRoutes_Registered_RequireSource(t *testing.T) {
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("POST %s: status = %d, want 405", path, w.Code)
 		}
+	}
+}
+
+// rest-api's CacheMap reads a 200 on index.m3u8?done=true as "transcode is
+// cached"; that probe must stay a 404 and must not open a session (it comes
+// with a source, and reaching openSession here would dereference the nil
+// contentProbe of this bare Web).
+func TestLegacyPlaylist_DoneProbeStays404(t *testing.T) {
+	web := &Web{}
+	web.buildHandler()
+	r := httptest.NewRequest(http.MethodGet, "/index.m3u8?done=true&api-key=k", nil)
+	r.Header.Set("X-Source-Url", "http://example/src.mkv")
+	w := httptest.NewRecorder()
+	web.handler.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("done=true probe: status = %d, want 404", w.Code)
 	}
 }

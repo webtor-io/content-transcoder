@@ -311,6 +311,13 @@ func (s *Session) EnsureRunning() error {
 	if s.restartFails >= maxConsecutiveRestarts {
 		return ErrRestartLimit
 	}
+	// A session that never had a run (legacy GET /index.m3u8 opens one
+	// without FFmpeg) is starting, not restarting: no attempt is charged.
+	if s.run == nil {
+		s.logger.WithField("seekTime", fmt.Sprintf("%.3f", s.seekTime)).
+			Info("session: starting run on first playlist request")
+		return s.acquireRunLocked()
+	}
 	s.restartFails++
 
 	s.logger.WithField("seekTime", fmt.Sprintf("%.3f", s.seekTime)).
