@@ -159,8 +159,8 @@ func TestSessionPlaylistHandler_MasterIdempotent(t *testing.T) {
 }
 
 func TestEmptySubtitlePlaylist_IsValidHLS(t *testing.T) {
-	empty := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n"
-	if !strings.HasPrefix(empty, "#EXTM3U") {
+	empty := string(emptySubtitlePlaylist(0))
+	if !strings.HasPrefix(empty, "#EXTM3U\n") {
 		t.Error("must start with #EXTM3U")
 	}
 	if !strings.Contains(empty, "#EXT-X-TARGETDURATION:") {
@@ -168,6 +168,23 @@ func TestEmptySubtitlePlaylist_IsValidHLS(t *testing.T) {
 	}
 	if strings.Contains(empty, "#EXT-X-ENDLIST") {
 		t.Error("must NOT contain ENDLIST — player should keep polling for segments")
+	}
+}
+
+// The stub stands in for minutes on a slow source, and whoever reads the run
+// off a playlist reads it off the stub too. Without the tag the new run read
+// as "starts at 0:00" (see emptySubtitlePlaylist).
+func TestEmptySubtitlePlaylist_CarriesTheRunOffset(t *testing.T) {
+	got := string(emptySubtitlePlaylist(1800))
+	if !strings.Contains(got, "#EXT-X-SESSION-OFFSET:1800.000\n") {
+		t.Fatalf("the stub must name the run it stands in for, got:\n%s", got)
+	}
+	if strings.Count(got, "#EXT-X-SESSION-OFFSET:") != 1 {
+		t.Fatalf("exactly one tag, got:\n%s", got)
+	}
+	// Same spelling as the playlists FFmpeg's output is tagged with.
+	if !strings.HasPrefix(got, "#EXTM3U\n#EXT-X-SESSION-OFFSET:") {
+		t.Fatalf("the tag follows #EXTM3U, like everywhere else, got:\n%s", got)
 	}
 }
 

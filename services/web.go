@@ -598,6 +598,25 @@ func sessionMasterPlaylist(sess *Session) ([]byte, error) {
 	return data, nil
 }
 
+// emptySubtitlePlaylist is what a subtitle playlist request gets while the
+// run has not written one yet: a live playlist with no segments, so subtitle
+// trouble never blocks the video, and -- no #EXT-X-ENDLIST -- the player keeps
+// asking.
+//
+// It carries the run's #EXT-X-SESSION-OFFSET like every other playlist of the
+// session. It did not until 2026-09-19, and that was not cosmetic: FFmpeg
+// writes the subtitle playlist only when the first subtitle segment CLOSES,
+// which takes the next cue and, on a source that is still downloading, can
+// take minutes (measured: a seek to 30:00 of a file cached to 10:00 -- 25 s of
+// audio in 45 s of wall time, and still no s0.m3u8 a minute in). All that time
+// the stub stood in, and a consumer reading the offset off it got none, i.e.
+// zero: the subtitle translation service took the new run for the one that
+// starts at 0:00, answered the player about THAT run ("nothing pending"), and
+// the player let the film go with no subtitles and a pill saying "caught up".
+func emptySubtitlePlaylist(runStart float64) []byte {
+	return []byte(fmt.Sprintf("#EXTM3U\n#EXT-X-SESSION-OFFSET:%.3f\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n", runStart))
+}
+
 func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, sess *Session, name string) {
 	sess.Touch()
 
@@ -643,7 +662,7 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 				if r.Context().Err() != nil {
 					return
 				}
-				data = []byte("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n")
+				data = emptySubtitlePlaylist(sess.RunStart())
 			}
 		} else {
 			// Wait for variant playlist
