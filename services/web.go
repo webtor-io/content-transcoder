@@ -421,7 +421,11 @@ func (s *Web) legacyProbeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	pr, err := s.contentProbe.Get(sourceURL, hashDir)
 	if err != nil {
-		log.WithError(err).Error("legacy probe: failed to probe media")
+		// Warning, not error: this route is hit by probes and crawlers on
+		// sources ffprobe cannot read (575 a day the first day), and the
+		// caller gets the same answer it always did. A real prober outage
+		// shows up on the session path.
+		log.WithError(err).Warn("legacy probe: failed to probe media")
 		http.Error(w, "failed to probe media", http.StatusInternalServerError)
 		return
 	}
