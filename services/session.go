@@ -319,6 +319,7 @@ func (s *Session) EnsureRunning() error {
 		return s.acquireRunLocked()
 	}
 	s.restartFails++
+	metricAutoRestartsTotal.Inc()
 
 	s.logger.WithField("seekTime", fmt.Sprintf("%.3f", s.seekTime)).
 		Info("session: auto-restarting run")
@@ -348,6 +349,7 @@ func (s *Session) RestartForSegment(segNum int) error {
 		return ErrRestartLimit
 	}
 	s.restartFails++
+	metricAutoRestartsTotal.Inc()
 
 	// Re-acquire at the same seekTime — segments are numbered relative to it.
 	// Don't recalculate: the current seekTime is already the correct position
@@ -446,6 +448,38 @@ func (s *Session) SegmentPath(filename string) string {
 // WaitForPlaylist polls until the playlist file appears (max timeout).
 // Returns early if the FFmpeg run is no longer active.
 func (s *Session) WaitForPlaylist(ctx context.Context, name string, timeout time.Duration) ([]byte, error) {
+	// Counted per outcome and per kind: a variant playlist that never comes
+	// is a dead stream, a subtitle one that takes its time is normal (see
+	// playlistKindSubtitle) — summed together the signal would drown.
+	kind := playlistKindVariant
+	if isSubtitlePlaylist(name) {
+		kind = playlistKindSubtitle
+	}
+	started := time.Now()
+	data, err := s.waitForPlaylist(ctx, name, timeout)
+	outcome := playlistWaitOK
+	switch {
+	case err == nil:
+		metricPlaylistWaitSeconds.WithLabelValues(kind).Observe(time.Since(started).Seconds())
+	case errors.Is(err, errPlaylistWaitTimeout):
+		outcome = playlistWaitTimeout
+	case errors.Is(err, errPlaylistNotRunning):
+		outcome = playlistWaitNotRunning
+	default:
+		outcome = playlistWaitCanceled
+	}
+	metricPlaylistWaitsTotal.WithLabelValues(outcome, kind).Inc()
+	return data, err
+}
+
+// Sentinels for the two ways a wait ends without a playlist on our side (the
+// third is the caller's context); WaitForPlaylist tells them apart by errors.Is.
+var (
+	errPlaylistWaitTimeout = errors.New("timeout waiting for playlist")
+	errPlaylistNotRunning  = errors.New("ffmpeg is not running and playlist not available")
+)
+
+func (s *Session) waitForPlaylist(ctx context.Context, name string, timeout time.Duration) ([]byte, error) {
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -465,13 +499,13 @@ func (s *Session) WaitForPlaylist(ctx context.Context, name string, timeout time
 			if err == nil && len(data) > 0 && isValidSessionPlaylist(data) {
 				return data, nil
 			}
-			return nil, errors.New("ffmpeg is not running and playlist not available")
+			return nil, errPlaylistNotRunning
 		}
 
 		select {
 		case <-ticker.C:
 		case <-deadline:
-			return nil, errors.New("timeout waiting for playlist")
+			return nil, errPlaylistWaitTimeout
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}

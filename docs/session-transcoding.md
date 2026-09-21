@@ -186,3 +186,27 @@ The player tracks `seekOffset` — the quantized seek position. Displayed time =
 | `sessionInactivityExpiry` | 10min | session_manager.go | Remove session after inactivity |
 | `runGracePeriod` | 30s | run_manager.go | Keep idle run alive for reuse |
 | `runGracefulStopTimeout` | 2s | transcode_run.go | SIGTERM → SIGKILL timeout |
+
+## Metrics
+
+Prometheus metrics (`services/metrics.go`) are served by common-services on
+the prom port (8083, `--use-prom`, `httpprom` in the chart). Namespace
+`transcoder`; label sets are closed — no session ids, hashes or paths.
+
+| Metric | Meaning |
+|---|---|
+| `sessions_total`, `sessions_active` | Sessions created / held by the SessionManager |
+| `runs_total{outcome}` | FFmpeg processes that ended: `finished` (source done), `released_idle` (run reaper), `killed` (shutdown, explicit Stop), `failed` (died on its own) |
+| `runs_active` | FFmpeg processes running |
+| `ffmpeg_exits_total{reason}` | How the process ended: `ok`, `error` (non-zero), `signal` |
+| `playlist_waits_total{outcome,kind}` | `WaitForPlaylist` results: `ok`/`timeout`/`not_running`/`canceled` × `variant`/`subtitle` (subtitle timeouts are expected, see `emptySubtitlePlaylist`) |
+| `playlist_wait_seconds{kind}` | Time until a playlist appeared, successful waits only |
+| `auto_restarts_total` | Auto-restart attempts charged to a session's budget |
+| `restart_limit_reached_total` | Sessions that hit `maxConsecutiveRestarts` (once per session) |
+| `source_open_seconds{outcome}` | Time to probe a source (its first read); cached probes excluded |
+
+A run's outcome is recorded once, when the process is reaped
+(`TranscodeRun.reapProcess`): whoever stops it leaves the reason in
+`stopReason` first, so a process that dies on its own (`failed`) is told
+apart from one we ended. `failed` + `signal` is an OOM kill or the node;
+`failed` + `error` is FFmpeg giving up on the source.

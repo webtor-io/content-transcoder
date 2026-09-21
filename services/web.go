@@ -635,6 +635,7 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 			if err := sess.EnsureRunning(); err != nil {
 				if errors.Is(err, ErrRestartLimit) {
 					sess.capWarnOnce.Do(func() {
+						metricRestartLimitReachedTotal.Inc()
 						log.WithError(err).WithFields(log.Fields{
 							"sessionID": sess.id,
 							"playlist":  name,
@@ -717,6 +718,7 @@ func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess
 				// never start. The player's retries stop spawning FFmpeg.
 				if errors.Is(err, ErrRestartLimit) {
 					sess.capWarnOnce.Do(func() {
+						metricRestartLimitReachedTotal.Inc()
 						log.WithError(err).WithFields(log.Fields{
 							"sessionID": sess.id,
 							"segment":   filename,

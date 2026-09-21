@@ -49,6 +49,8 @@ func (m *SessionManager) Create(cfg SessionConfig) *Session {
 	m.sessions[s.id] = s
 	m.mu.Unlock()
 
+	metricSessionsTotal.Inc()
+	metricSessionsActive.Inc()
 	log.WithFields(log.Fields{
 		"sessionID": s.id,
 		"sourceURL": s.sourceURL,
@@ -75,6 +77,7 @@ func (m *SessionManager) Close(id string) {
 	m.mu.Unlock()
 
 	if ok {
+		metricSessionsActive.Dec()
 		s.Close()
 		log.WithField("sessionID", id).Info("sessionManager: closed session")
 	}
@@ -97,6 +100,7 @@ func (m *SessionManager) CloseAll() {
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
 
+	metricSessionsActive.Sub(float64(len(sessions)))
 	for _, s := range sessions {
 		s.Close()
 	}

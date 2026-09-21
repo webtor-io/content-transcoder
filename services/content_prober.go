@@ -92,12 +92,21 @@ func (s *ContentProbe) get(input string, out string) (pr *cp.ProbeReply, err err
 	// File does not exist, proceed with probing
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.timeout)*time.Second)
 	defer cancel()
+	// The probe is the first read of the source: on a torrent it is the wait
+	// for the first pieces, and this is where a slow start is spent. Timed
+	// only when actually probing — the cached index.json above is a disk read.
+	started := time.Now()
 	if s.host == "" {
 		pr, err = s.localProbe(ctx, input)
 	} else {
 
 		pr, err = s.remoteProbe(ctx, input)
 	}
+	outcome := probeOutcomeOK
+	if err != nil {
+		outcome = probeOutcomeError
+	}
+	metricSourceOpenSeconds.WithLabelValues(outcome).Observe(time.Since(started).Seconds())
 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to probe")

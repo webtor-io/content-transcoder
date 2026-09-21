@@ -222,6 +222,6 @@ func (m *RunManager) cleanupIdleRuns() {
 
 	for _, run := range toCleanup {
 		log.WithField("runKey", run.key).Info("runManager: cleaning up idle run")
-		run.Cleanup()
+		run.cleanup(runOutcomeReleasedIdle)
 	}
 }

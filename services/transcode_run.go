@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +65,13 @@ type TranscodeRun struct {
 	// audiobook (copied in 5.5 minutes, 235x realtime) into a restart loop
 	// that ended in "transcoder restart limit reached".
 	completed bool
+
+	// stopReason is the run outcome (runOutcome*) the stopper wants recorded
+	// for the process it is about to signal; empty while nobody is stopping
+	// it. Read by reapProcess after the exit, so a process that ends on its
+	// own is told apart from one we ended, and the idle reaper from a
+	// shutdown. Guarded by mu.
+	stopReason string
 
 	// lifecycle
 	runCtx    context.Context
@@ -215,38 +223,88 @@ func (r *TranscodeRun) startLocked() error {
 		return errors.Wrap(err, "failed to start ffmpeg")
 	}
 
-	r.running = true
 	r.logger.WithFields(log.Fields{
 		"pid":      r.cmd.Process.Pid,
 		"seekTime": fmt.Sprintf("%.3f", r.seekTime),
 	}).Info("run: ffmpeg started")
-
-	go func() {
-		defer outLog.Close()
-		defer errLog.Close()
-		defer close(r.done)
-		waitErr := r.cmd.Wait()
-		if waitErr != nil {
-			r.logger.WithError(waitErr).Debug("run: ffmpeg exited with error")
-		} else {
-			r.mu.Lock()
-			r.completed = true
-			r.mu.Unlock()
-			r.logger.Info("run: ffmpeg finished normally")
-		}
-	}()
+	r.watchProcessLocked(outLog, errLog)
 
 	return nil
+}
+
+// watchProcessLocked marks the process just started into r.cmd as running
+// and reaps it in the background; the closers (its log files) are closed
+// once it is gone. Caller holds mu. Split from startLocked so a test can
+// put any process where FFmpeg goes and exercise the same bookkeeping.
+func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
+	r.running = true
+	r.stopReason = ""
+	metricRunsActive.Inc()
+	go r.reapProcess(closers...)
+}
+
+// reapProcess waits for the FFmpeg process started by startLocked, records
+// how and why it ended, then closes done. It is the one place a process's
+// end is counted: every stop path ends here too, so the counters add up to
+// the number of processes. The closers are the process's log files.
+func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
+	for _, c := range closers {
+		defer c.Close()
+	}
+	defer close(r.done)
+	waitErr := r.cmd.Wait()
+
+	r.mu.Lock()
+	stopReason := r.stopReason
+	if waitErr == nil {
+		r.completed = true
+	}
+	r.mu.Unlock()
+
+	outcome, reason := classifyExit(waitErr, stopReason)
+	metricRunsActive.Dec()
+	metricRunsTotal.WithLabelValues(outcome).Inc()
+	metricFFmpegExitsTotal.WithLabelValues(reason).Inc()
+
+	if waitErr != nil {
+		r.logger.WithError(waitErr).WithField("outcome", outcome).Debug("run: ffmpeg exited with error")
+	} else {
+		r.logger.Info("run: ffmpeg finished normally")
+	}
+}
+
+// classifyExit maps a process exit to the run outcome and the exit reason.
+// A clean exit is finished whoever asked for it (the segments are all
+// there). Otherwise the outcome is the stopper's, or failed when nobody was
+// stopping it: an error exit is FFmpeg giving up on the source, a signal we
+// did not send is the kernel (OOM) or the node.
+func classifyExit(waitErr error, stopReason string) (outcome, reason string) {
+	if waitErr == nil {
+		return runOutcomeFinished, ffmpegExitOK
+	}
+	reason = ffmpegExitError
+	var exitErr *exec.ExitError
+	if errors.As(waitErr, &exitErr) {
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			reason = ffmpegExitSignal
+		}
+	}
+	if stopReason != "" {
+		return stopReason, reason
+	}
+	return runOutcomeFailed, reason
 }
 
 // Stop stops FFmpeg.
 func (r *TranscodeRun) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.stopLocked()
+	r.stopLocked(runOutcomeKilled)
 }
 
-func (r *TranscodeRun) stopLocked() {
+// stopLocked stops FFmpeg, recording reason as the run's outcome (see
+// stopReason). Caller holds mu.
+func (r *TranscodeRun) stopLocked(reason string) {
 	if !r.running {
 		return
 	}
@@ -261,6 +319,7 @@ func (r *TranscodeRun) stopLocked() {
 		}
 	}
 
+	r.stopReason = reason
 	r.cancel()
 
 	if r.cmd != nil && r.cmd.Process != nil {
@@ -286,8 +345,14 @@ func (r *TranscodeRun) stopLocked() {
 
 // Cleanup stops FFmpeg and removes the output directory.
 func (r *TranscodeRun) Cleanup() {
+	r.cleanup(runOutcomeKilled)
+}
+
+// cleanup is Cleanup with the run outcome to record if FFmpeg is still
+// running: the idle reaper passes released_idle, everything else is killed.
+func (r *TranscodeRun) cleanup(reason string) {
 	r.mu.Lock()
-	r.stopLocked()
+	r.stopLocked(reason)
 	r.runCancel()
 	r.mu.Unlock()
 

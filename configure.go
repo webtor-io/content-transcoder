@@ -16,6 +16,7 @@ func configure(app *cli.App) {
 	app.Flags = s.RegisterContentProberFlags(app.Flags)
 	app.Flags = s.RegisterWebFlags(app.Flags)
 	app.Flags = cs.RegisterProbeFlags(app.Flags)
+	app.Flags = cs.RegisterPromFlags(app.Flags)
 	app.Flags = cs.RegisterPprofFlags(app.Flags)
 	app.Flags = s.RegisterHLSFlags(app.Flags)
 	app.Action = run
@@ -62,6 +63,14 @@ func run(c *cli.Context) (err error) {
 	if probe != nil {
 		servers = append(servers, probe)
 		defer probe.Close()
+	}
+
+	// Setting Prom: serves the default registry (services/metrics.go) on the
+	// prom port; the chart already exposes it as httpprom.
+	prom := cs.NewProm(c)
+	if prom != nil {
+		servers = append(servers, prom)
+		defer prom.Close()
 	}
 
 	// Setting Pprof
