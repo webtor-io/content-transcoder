@@ -249,7 +249,59 @@ func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
 	r.stopReason = ""
 	r.started = time.Now()
 	metricRunsActive.Inc()
+	if mode := r.runMode(); mode != "" {
+		start := runStartZero
+		if r.seekTime > 0 {
+			start = runStartSeek
+		}
+		go watchFirstSegment(r.h.primary[0].GetPlaylistPath(r.outputDir)+".ffmpeg", r.started, r.done, mode, start)
+	}
 	go r.reapProcess(closers...)
+}
+
+// minSpeedMediaSeconds is how much media a run must have produced for its
+// speed to be recorded (see reapProcess).
+const minSpeedMediaSeconds = 30
+
+// firstSegmentPoll is how often watchFirstSegment looks for the playlist.
+const firstSegmentPoll = 200 * time.Millisecond
+
+// watchFirstSegment records how long the process started at started took to
+// close the first segment of the primary stream: FFmpeg's segment muxer
+// writes the playlist file only then. A restart reuses the run dir, so a
+// playlist left by the previous process does not count -- only one written
+// after started. Gives up when the process ends first.
+func watchFirstSegment(playlist string, started time.Time, done <-chan struct{}, mode, start string) {
+	t := time.NewTicker(firstSegmentPoll)
+	defer t.Stop()
+	for {
+		if fi, err := os.Stat(playlist); err == nil && !fi.ModTime().Before(started) {
+			metricRunFirstSegmentSeconds.WithLabelValues(mode, start).Observe(time.Since(started).Seconds())
+			return
+		}
+		select {
+		case <-done:
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// runMode is the run's metrics mode (runMode* constants), or "" when the run
+// has no HLS description (tests).
+func (r *TranscodeRun) runMode() string {
+	if r.h == nil || len(r.h.primary) == 0 {
+		return ""
+	}
+	for _, s := range r.h.primary {
+		if s.st == Video {
+			if s.IsCopy() {
+				return runModeCopy
+			}
+			return runModeReencode
+		}
+	}
+	return runModeAudio
 }
 
 // reapProcess waits for the FFmpeg process started by startLocked, records
@@ -276,15 +328,25 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 	metricRunsTotal.WithLabelValues(outcome).Inc()
 	metricFFmpegExitsTotal.WithLabelValues(reason).Inc()
 
+	tail := stderrTail(filepath.Join(r.outputDir, "ffmpeg.err"))
+	// Speed at the end, whatever ended it: FFmpeg's figure is cumulative
+	// (media time over wall time since start). Under 30 s of media it is
+	// mostly startup and says little about keeping up.
+	if mode := r.runMode(); mode != "" {
+		if media, speed, ok := lastProgress(tail); ok && media >= minSpeedMediaSeconds {
+			metricRunSpeed.WithLabelValues(mode).Observe(speed)
+		}
+	}
+
 	switch {
 	case outcome == runOutcomeFailed:
 		// FFmpeg gave up on its own. Its reason is only in ffmpeg.err, which
 		// the next auto-restart truncates and the cleanup removes: until this
 		// was logged, 15% of runs failed with no trace of why. Read before
 		// done closes, so no restart can have truncated it yet.
+		metricFFmpegFailuresTotal.WithLabelValues(failureCause(tail, reason)).Inc()
 		// A source that cannot be converted fails the same way on each of
 		// its 5 auto-restarts: logged once, and again only if it changes.
-		tail := stderrTail(filepath.Join(r.outputDir, "ffmpeg.err"))
 		fields := log.Fields{
 			"seekTime": fmt.Sprintf("%.3f", r.seekTime),
 			"ranFor":   time.Since(started).Round(100 * time.Millisecond).String(),

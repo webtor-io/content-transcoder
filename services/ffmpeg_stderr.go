@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -94,4 +95,60 @@ func failureKey(tail string) string {
 // video, "size= ..." for audio-only outputs).
 func isProgressLine(l string) bool {
 	return strings.HasPrefix(l, "frame=") || strings.HasPrefix(l, "size=")
+}
+
+// failureCause names why a failed run died, from its stderr tail and how it
+// ended (see the failure* constants). Order matters: the specific causes
+// before the generic ones they can co-occur with ("Invalid argument" follows
+// most of them).
+func failureCause(tail string, exitReason string) string {
+	if exitReason == ffmpegExitSignal {
+		return failureSignal
+	}
+	switch {
+	case strings.Contains(tail, "only possible from text to text or bitmap to bitmap"):
+		return failureSubtitleBitmap
+	case strings.Contains(tail, "no decoder found"), strings.Contains(tail, "Decoder not found"):
+		return failureNoDecoder
+	case strings.Contains(tail, "Non-monotonic DTS"):
+		return failureTimestamps
+	case strings.Contains(tail, "Invalid data found when processing input"):
+		return failureInvalidData
+	case strings.Contains(tail, "I/O error"), strings.Contains(tail, "HTTP error"),
+		strings.Contains(tail, "Server returned"), strings.Contains(tail, "Connection reset"),
+		strings.Contains(tail, "Connection refused"), strings.Contains(tail, "Error in the pull function"):
+		return failureSource
+	}
+	return failureOther
+}
+
+var (
+	progressTimePattern  = regexp.MustCompile(`time=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)`)
+	progressSpeedPattern = regexp.MustCompile(`speed=\s*([0-9.]+)x`)
+)
+
+// lastProgress reads media time (seconds) and speed off the last progress
+// line in a stderr tail; ok is false when there is none or it has no speed
+// yet ("speed=N/A" in the first moments).
+func lastProgress(tail string) (mediaSec float64, speed float64, ok bool) {
+	lines := strings.Split(tail, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !isProgressLine(lines[i]) {
+			continue
+		}
+		t := progressTimePattern.FindStringSubmatch(lines[i])
+		s := progressSpeedPattern.FindStringSubmatch(lines[i])
+		if t == nil || s == nil {
+			return 0, 0, false
+		}
+		h, _ := strconv.ParseFloat(t[1], 64)
+		m, _ := strconv.ParseFloat(t[2], 64)
+		sec, _ := strconv.ParseFloat(t[3], 64)
+		speed, err := strconv.ParseFloat(s[1], 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		return h*3600 + m*60 + sec, speed, true
+	}
+	return 0, 0, false
 }
