@@ -21,7 +21,9 @@ const probeRunStartTimeout = 5 * time.Second
 // tests stub the exec.
 var probeRunStart = ffprobeRunStart
 
-// ffprobeRunStart reads exactly one video packet at the seek point.
+// ffprobeRunStart reads exactly one packet of stream (an ffprobe stream
+// specifier: the video the run maps, see HLS.primaryVideoStreamSpecifier)
+// at the seek point.
 // -read_intervals seeks the way FFmpeg's own input seek does (backward, to
 // the keyframe at or before the position, via the container index), so the
 // first packet it reports is the keyframe the run will start from — one
@@ -33,7 +35,7 @@ var probeRunStart = ffprobeRunStart
 // this is a known limit, not a proof. Cost: ~4 range reads against the
 // seeder (open, tail index, seek area) — the same reads the run itself is
 // about to do, so warm in the common case.
-func ffprobeRunStart(ctx context.Context, sourceURL string, seek float64) (float64, error) {
+func ffprobeRunStart(ctx context.Context, sourceURL string, stream string, seek float64) (float64, error) {
 	ffprobePath, err := exec.LookPath("ffprobe")
 	if err != nil {
 		return 0, errors.Wrap(err, "ffprobe not found")
@@ -50,7 +52,7 @@ func ffprobeRunStart(ctx context.Context, sourceURL string, seek float64) (float
 	cmd := exec.CommandContext(ctx, ffprobePath,
 		"-v", "error",
 		"-protocol_whitelist", "http,https,tcp,tls",
-		"-select_streams", "v:0",
+		"-select_streams", stream,
 		"-show_entries", "packet=pts_time,dts_time",
 		"-of", "csv=p=0",
 		"-read_intervals", fmt.Sprintf("%.3f%%+#1", seek),

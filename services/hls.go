@@ -4,6 +4,7 @@ import (
 	"fmt"
 	u "net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -107,7 +108,41 @@ const (
 var (
 	ErrTranscodingDisabled    = errors.New("video transcoding is disabled")
 	ErrResolutionNotSupported = errors.New("resolution over 1080p is not supported")
+	ErrNoPlayableStreams      = errors.New("no video or audio stream")
 )
+
+// textSubtitleCodecs are the subtitle codecs the webvtt encoder can take:
+// text formats the production build (ffmpeg 8.1.2) has a decoder for. It is
+// an allowlist on purpose. A bitmap subtitle (hdmv_pgs, dvd, dvb, xsub) in
+// front of -c:s webvtt makes FFmpeg refuse the whole output ("Subtitle
+// encoding currently only possible from text to text or bitmap to
+// bitmap"), and a stream without a decoder (no codec name, or
+// hdmv_text_subtitle, which is text but has no decoder) fails the same way
+// ("Decoding requested, but no decoder found"). Either one took the video
+// and audio of the run down with it: 129 of 132 sessions with a dvd/dvb
+// track never played. eia_608 (cc_dec) is in: checked end to end, it writes
+// cues. arib_caption decodes to text too (libaribb24) but was not tried on a
+// real stream; it stays out until it is (1 stream in 5244 prod probes).
+var textSubtitleCodecs = map[string]bool{
+	"subrip":     true,
+	"srt":        true,
+	"ass":        true,
+	"ssa":        true,
+	"webvtt":     true,
+	"mov_text":   true,
+	"text":       true,
+	"microdvd":   true,
+	"subviewer":  true,
+	"subviewer1": true,
+	"sami":       true,
+	"realtext":   true,
+	"mpl2":       true,
+	"pjs":        true,
+	"jacosub":    true,
+	"vplayer":    true,
+	"stl":        true,
+	"eia_608":    true,
+}
 
 type HLS struct {
 	in      string
@@ -123,6 +158,9 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 	parsedURL, err := u.Parse(h.in)
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to parse url")
+	}
+	if len(h.primary) == 0 {
+		return nil, ErrNoPlayableStreams
 	}
 	if h.primary[0].s.GetCodecType() == "video" {
 		if h.primary[0].s.GetCodecName() != "h264" {
@@ -153,9 +191,42 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 		params = append(params, s.GetFFmpegParams(out)...)
 	}
 	for _, s := range h.subs {
+		// Subtitles FFmpeg cannot turn into webvtt keep their entry in the
+		// master playlist (see MakeMasterPlaylist) but get no output: the
+		// player's request for them falls through to the empty subtitle
+		// playlist instead of the run failing for everyone.
+		if !s.hasTextDecoder() {
+			continue
+		}
 		params = append(params, s.GetFFmpegParams(out)...)
 	}
 	return params, nil
+}
+
+// subtitleWithoutOutput reports whether name is the playlist of a subtitle
+// track that is in the master playlist but gets no FFmpeg output (see
+// textSubtitleCodecs): no playlist will ever appear for it.
+func (h *HLS) subtitleWithoutOutput(name string) bool {
+	for _, s := range h.subs {
+		if s.GetPlaylistName() == name {
+			return !s.hasTextDecoder()
+		}
+	}
+	return false
+}
+
+// primaryVideoStreamSpecifier is the input stream the video output is
+// mapped from, as an FFmpeg/ffprobe stream specifier, or "" when the primary
+// output is not video. Probes that must look at the same stream as the run
+// (the copy-mode keyframe lookup) use it instead of v:0, which also counts
+// cover art.
+func (h *HLS) primaryVideoStreamSpecifier() string {
+	for _, p := range h.primary {
+		if p.st == Video {
+			return strconv.Itoa(int(p.s.GetIndex()))
+		}
+	}
+	return ""
 }
 
 type HLSStream struct {
@@ -220,6 +291,12 @@ func (h *HLSStream) GetCodecParams() []string {
 	return params
 }
 
+// hasTextDecoder reports whether a subtitle stream can be converted to
+// webvtt; every other stream type is always mapped.
+func (h *HLSStream) hasTextDecoder() bool {
+	return h.st != Subtitle || textSubtitleCodecs[h.s.GetCodecName()]
+}
+
 func (h *HLSStream) IsCopy() bool {
 	codec := h.GetCodecParams()
 	return len(codec) > 0 && codec[len(codec)-1] == "copy"
@@ -227,8 +304,15 @@ func (h *HLSStream) IsCopy() bool {
 
 func (h *HLSStream) GetFFmpegParams(out string) []string {
 
+	// Mapped by the input stream's own index. h.index is this stream's
+	// number among the streams NewHLS keeps (it names the outputs: v0, a1,
+	// s2), and FFmpeg's 0:<type>:<n> counts every stream of the type --
+	// the two disagree as soon as NewHLS skips one. A PGS track before a
+	// text track mapped the PGS into the webvtt encoder and failed the run
+	// (140 of 686 failed runs in 50h); cover art before the video mapped
+	// the picture as the movie.
 	params := []string{
-		"-map", fmt.Sprintf("0:%v:%v", h.st, h.index),
+		"-map", fmt.Sprintf("0:%d", h.s.GetIndex()),
 		"-f", "segment",
 		"-segment_time", "4",
 		"-segment_list_type", "hls",

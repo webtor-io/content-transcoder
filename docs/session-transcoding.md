@@ -62,7 +62,7 @@ The same `#EXT-X-SESSION-OFFSET` tag is also injected into the master `index.m3u
 
 #### Subtitle Playlist Fallback
 
-Subtitle streams (playlists matching `s{N}.m3u8`) use a shorter timeout (5s vs 5min). If FFmpeg cannot produce subtitle segments within that time (common with forced/bitmap subtitle tracks that have no data), the handler returns a valid empty HLS live playlist:
+Subtitle streams (playlists matching `s{N}.m3u8`) use a shorter timeout (5s vs 5min). If FFmpeg cannot produce subtitle segments within that time (common with forced tracks that have little data), the handler returns a valid empty HLS live playlist:
 
 ```
 #EXTM3U
@@ -72,7 +72,13 @@ Subtitle streams (playlists matching `s{N}.m3u8`) use a shorter timeout (5s vs 5
 
 Without `#EXT-X-ENDLIST` — the player keeps polling, so if segments appear later they get picked up. This prevents subtitle issues from blocking video playback entirely.
 
-Detection: `isSubtitlePlaylist(name)` checks the `s{digits}.m3u8` pattern. The first request does a quick check (`PlaylistForStream`) then waits up to 5s. Subsequent requests return the empty playlist immediately if the file still doesn't exist.
+Detection: `isSubtitlePlaylist(name)` checks the `s{digits}.m3u8` pattern. Every request does a quick check (`PlaylistForStream`) and then waits up to 5s while the run is going. Every wait is counted in `transcoder_playlist_waits_total{kind="subtitle"}`.
+
+This fallback only protects the video from a subtitle track that is slow. A subtitle track FFmpeg cannot convert does not produce "no data": it makes FFmpeg refuse to open the outputs, and the whole run dies with the video and audio in it. That means bitmap codecs (PGS, `dvd_subtitle`, `dvb_subtitle`, `xsub`: "Subtitle encoding currently only possible from text to text or bitmap to bitmap") and streams without a text decoder ("Decoding requested, but no decoder found"). So `GetFFmpegParams` maps a subtitle stream only when its codec is in `textSubtitleCodecs` (`services/hls.go`). This is an allowlist of text codecs the production FFmpeg build decodes.
+
+- **Numbering is not changed by this.** `hdmv_pgs_subtitle` streams are dropped from the HLS subtitle group entirely. Every other subtitle stream, mapped or not, keeps its `s{N}` slot in the master playlist. web-ui counts slots the same way (`embeddedSubtitleVisible` in `handlers/action/helper.go`) and uses `N` as the hls.js track index, so removing an entry would shift every later track.
+- **An unmapped track gets the empty playlist above at once.** There is no 5s wait and no wait metric: hls.js re-polls a segment-less live playlist every few seconds, and one viewer with such a track selected would otherwise tip `TranscoderSessionsStuck`.
+- **Streams are mapped by their input index (`-map 0:{index}`), never by type-relative position (`0:s:{n}`).** `n` counts only the streams `NewHLS` kept, while FFmpeg's `0:s:n` counts all of them. Until 2026-09 that mismatch mapped a PGS track that sat before a text track into the webvtt encoder.
 
 ### Inactivity
 
@@ -135,13 +141,12 @@ ffmpeg -ss {time} -noaccurate_seek -i {url} ... -c:v copy ...
 ### Re-encode Mode (mpeg4, vp9, etc. → `-c:v h264`)
 
 ```
-ffmpeg -i {url} -ss {time} ... -c:v h264 -preset veryfast ...
+ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ...
 ```
 
-- `-ss` after `-i`: output-level seek. FFmpeg decodes from the beginning and discards frames until the target position
-- Required for containers like AVI over HTTP that don't support input-level seeking (no byte-range support, no index)
-- Slower but always works
-- Perfect A/V sync (both streams decoded and started from exact position)
+- `-ss` before `-i` here too (`injectSeekParams` places it there in both modes). FFmpeg seeks the input to the keyframe before `{time}` using the container index, then decodes and discards frames up to `{time}` (accurate seek is the default).
+- Perfect A/V sync: both streams are decoded and start from the exact position.
+- On any seek (`{time}` > 0), `-xerror` is removed. AVI and other containers report non-fatal errors after a seek, and `-xerror` would turn them into a failed run.
 
 ## Player (player/index.html)
 

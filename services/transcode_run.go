@@ -73,6 +73,14 @@ type TranscodeRun struct {
 	// shutdown. Guarded by mu.
 	stopReason string
 
+	// started is when the current FFmpeg process was spawned. Guarded by mu.
+	started time.Time
+
+	// lastFailure is the stderr tail of the last failure that was logged,
+	// with per-process addresses stripped (see sameFailure). Only
+	// reapProcess touches it, and one process is reaped at a time.
+	lastFailure string
+
 	// lifecycle
 	runCtx    context.Context
 	runCancel context.CancelFunc
@@ -196,7 +204,7 @@ func (r *TranscodeRun) startLocked() error {
 
 	r.logger.WithFields(log.Fields{
 		"seekTime": fmt.Sprintf("%.3f", r.seekTime),
-		"params":   strings.Join(params, " "),
+		"params":   redactSecrets(strings.Join(params, " ")),
 	}).Info("run: starting ffmpeg")
 
 	r.cmd = exec.CommandContext(r.ctx, ffmpegPath, params...)
@@ -239,6 +247,7 @@ func (r *TranscodeRun) startLocked() error {
 func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
 	r.running = true
 	r.stopReason = ""
+	r.started = time.Now()
 	metricRunsActive.Inc()
 	go r.reapProcess(closers...)
 }
@@ -256,6 +265,7 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 
 	r.mu.Lock()
 	stopReason := r.stopReason
+	started := r.started
 	if waitErr == nil {
 		r.completed = true
 	}
@@ -266,9 +276,30 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 	metricRunsTotal.WithLabelValues(outcome).Inc()
 	metricFFmpegExitsTotal.WithLabelValues(reason).Inc()
 
-	if waitErr != nil {
+	switch {
+	case outcome == runOutcomeFailed:
+		// FFmpeg gave up on its own. Its reason is only in ffmpeg.err, which
+		// the next auto-restart truncates and the cleanup removes: until this
+		// was logged, 15% of runs failed with no trace of why. Read before
+		// done closes, so no restart can have truncated it yet.
+		// A source that cannot be converted fails the same way on each of
+		// its 5 auto-restarts: logged once, and again only if it changes.
+		tail := stderrTail(filepath.Join(r.outputDir, "ffmpeg.err"))
+		fields := log.Fields{
+			"seekTime": fmt.Sprintf("%.3f", r.seekTime),
+			"ranFor":   time.Since(started).Round(100 * time.Millisecond).String(),
+			"stderr":   tail,
+		}
+		if key := failureKey(tail); key != r.lastFailure {
+			r.lastFailure = key
+			r.logger.WithError(waitErr).WithFields(fields).Warn("run: ffmpeg failed")
+		} else {
+			r.logger.WithError(waitErr).WithFields(fields).Debug("run: ffmpeg failed again the same way")
+		}
+	case waitErr != nil:
+		// Stopped by us (released, killed): the exit status is our signal.
 		r.logger.WithError(waitErr).WithField("outcome", outcome).Debug("run: ffmpeg exited with error")
-	} else {
+	default:
 		r.logger.Info("run: ffmpeg finished normally")
 	}
 }
@@ -409,7 +440,13 @@ func (r *TranscodeRun) RealStart() float64 {
 // keyframe after the seek point, or one implausibly far before it (a
 // broken index; 60 s is well past any GOP we transcode). Caller holds mu.
 func (r *TranscodeRun) resolveRealStart() float64 {
-	k, err := probeRunStart(r.runCtx, r.sourceURL, r.seekTime)
+	stream := "v:0"
+	if r.h != nil {
+		if sp := r.h.primaryVideoStreamSpecifier(); sp != "" {
+			stream = sp
+		}
+	}
+	k, err := probeRunStart(r.runCtx, r.sourceURL, stream, r.seekTime)
 	if err != nil {
 		r.logger.WithError(err).Warn("run: failed to resolve the real start, reporting the quantized seek")
 		return r.seekTime

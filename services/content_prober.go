@@ -141,14 +141,16 @@ func (s *ContentProbe) remoteProbe(ctx context.Context, input string) (*cp.Probe
 	req := cp.ProbeRequest{
 		Url: input,
 	}
-	log := log.WithField("request", req)
+	// The source URL carries the internal api-key: every line that quotes
+	// it goes through redactSecrets.
+	log := log.WithField("request", redactSecrets(fmt.Sprint(req)))
 	log.Info("sending probing request")
 
 	r, err := cl.Probe(ctx, &req)
 	if err != nil {
 		return nil, errors.Wrap(err, "probing failed")
 	}
-	log.WithField("reply", r).Info("got probing reply")
+	log.WithField("reply", redactSecrets(r.String())).Info("got probing reply")
 
 	return r, nil
 
@@ -165,7 +167,7 @@ func (s *ContentProbe) localProbe(ctx context.Context, input string) (*cp.ProbeR
 		return nil, errors.Wrap(err, "unable to parse url")
 	}
 	cmdText := fmt.Sprintf("%s -show_format -show_streams -print_format json '%s'", ffprobe, parsedURL.String())
-	log.WithField("cmd", cmdText).Info("running ffprobe command")
+	log.WithField("cmd", redactSecrets(cmdText)).Info("running ffprobe command")
 	cmd := exec.Command(ffprobe, "-show_format", "-show_streams", "-print_format", "json", parsedURL.String())
 	var bufOut bytes.Buffer
 	var bufErr bytes.Buffer
@@ -187,14 +189,14 @@ func (s *ContentProbe) localProbe(ctx context.Context, input string) (*cp.ProbeR
 		output := bufOut.String()
 		stdErr := bufErr.String()
 		if err != nil {
-			return nil, errors.Wrapf(err, "probing failed with err=%v", stdErr)
+			return nil, errors.Wrapf(err, "probing failed with err=%v", redactSecrets(stdErr))
 		}
 		var rep cp.ProbeReply
 		err = json.Unmarshal([]byte(output), &rep)
 		if err != nil {
-			return nil, errors.Wrapf(err, "unable to unmarshal output=%v", output)
+			return nil, errors.Wrapf(err, "unable to unmarshal output=%v", redactSecrets(output))
 		}
-		log.WithField("output", rep).Info("probing finished")
+		log.WithField("output", redactSecrets(rep.String())).Info("probing finished")
 		return &rep, nil
 	}
 

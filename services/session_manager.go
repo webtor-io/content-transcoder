@@ -53,7 +53,7 @@ func (m *SessionManager) Create(cfg SessionConfig) *Session {
 	metricSessionsActive.Inc()
 	log.WithFields(log.Fields{
 		"sessionID": s.id,
-		"sourceURL": s.sourceURL,
+		"sourceURL": redactSecrets(s.sourceURL),
 		"duration":  s.duration,
 	}).Info("sessionManager: created session")
 

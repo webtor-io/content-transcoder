@@ -42,19 +42,19 @@ func TestResolveRealStart(t *testing.T) {
 	t.Cleanup(func() { probeRunStart = orig })
 	run := newTranscodeRun("k", t.TempDir(), 600, "http://src", nil)
 
-	probeRunStart = func(context.Context, string, float64) (float64, error) { return 598.343, nil }
+	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 598.343, nil }
 	if got := run.resolveRealStart(); got != 598.343 {
 		t.Fatalf("keyframe: %v", got)
 	}
-	probeRunStart = func(context.Context, string, float64) (float64, error) { return 0, errors.New("boom") }
+	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 0, errors.New("boom") }
 	if got := run.resolveRealStart(); got != 600 {
 		t.Fatalf("error falls back: %v", got)
 	}
-	probeRunStart = func(context.Context, string, float64) (float64, error) { return 601, nil }
+	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 601, nil }
 	if got := run.resolveRealStart(); got != 600 {
 		t.Fatalf("after the seek point falls back: %v", got)
 	}
-	probeRunStart = func(context.Context, string, float64) (float64, error) { return 500, nil }
+	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 500, nil }
 	if got := run.resolveRealStart(); got != 600 {
 		t.Fatalf("implausibly early falls back: %v", got)
 	}
@@ -113,6 +113,27 @@ func TestPlaylistCarriesTheRealStart(t *testing.T) {
 	}
 }
 
+// The keyframe probe must look at the stream the run maps, not v:0: with
+// cover art first, v:0 is the picture.
+func TestResolveRealStartProbesTheMappedVideo(t *testing.T) {
+	orig := probeRunStart
+	t.Cleanup(func() { probeRunStart = orig })
+	var got string
+	probeRunStart = func(_ context.Context, _ string, stream string, _ float64) (float64, error) {
+		got = stream
+		return 598, nil
+	}
+	h := NewHLS("http://src/x.mp4", &cp.ProbeReply{Streams: []*cp.Stream{
+		{Index: 0, CodecType: "video", CodecName: "mjpeg"},
+		{Index: 1, CodecType: "video", CodecName: "h264", Height: 720},
+	}}, &HLSConfig{sm: Online})
+	run := newTranscodeRun("k", t.TempDir(), 600, "http://src/x.mp4", h)
+	run.resolveRealStart()
+	if got != "1" {
+		t.Fatalf("probed stream %q, want \"1\"", got)
+	}
+}
+
 // TestResolvedStartSurvivesTheRunObject: the reaper deletes idle runs out
 // from under 10-minute sessions; a re-created run for the same key must
 // report the offset the first one resolved, not re-probe (a cold source
@@ -123,7 +144,7 @@ func TestResolvedStartSurvivesTheRunObject(t *testing.T) {
 	orig := probeRunStart
 	t.Cleanup(func() { probeRunStart = orig })
 	probes := 0
-	probeRunStart = func(context.Context, string, float64) (float64, error) {
+	probeRunStart = func(context.Context, string, string, float64) (float64, error) {
 		probes++
 		return 598.343, nil
 	}
@@ -148,7 +169,7 @@ func TestResolvedStartSurvivesTheRunObject(t *testing.T) {
 
 	// The run object is gone (reaped); the next one is preset and must not
 	// probe — the stub would now fail and fall back to 600.
-	probeRunStart = func(context.Context, string, float64) (float64, error) {
+	probeRunStart = func(context.Context, string, string, float64) (float64, error) {
 		probes++
 		return 0, errors.New("source went cold")
 	}

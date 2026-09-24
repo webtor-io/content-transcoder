@@ -92,7 +92,7 @@ Depends on codec mode:
 | Mode | `-ss` position | Flags | Rationale |
 |------|---------------|-------|-----------|
 | **Copy** (h264 source) | Before `-i` | `-ss T -noaccurate_seek -i URL` | Fast input-level seek; `-noaccurate_seek` starts both video and audio from same keyframe for A/V sync |
-| **Re-encode** (mpeg4, vp9, etc.) | After `-i` | `-i URL -ss T` | Output-level seek works with all containers (AVI, FLV) over HTTP without range requests |
+| **Re-encode** (mpeg4, vp9, etc.) | Before `-i` | `-ss T -i URL` | Input seek to the keyframe before T, then accurate decode up to T; `-xerror` is dropped on seeks |
 
 ### Output Directory Structure
 

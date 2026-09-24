@@ -275,6 +275,14 @@ func (s *Web) openSession(sourceURL string, start bool) (*Session, int, string) 
 
 	duration := getDuration(pr)
 	hls := s.hlsBuilder.Build(sourceURL, pr)
+	// Content with neither video nor audio is refused before a session
+	// exists: GetFFmpegParams would refuse it too, but only when FFmpeg is
+	// started, and the legacy route opens a session without starting it
+	// (it answered 200 with a master that had no variant).
+	if len(hls.primary) == 0 {
+		log.WithField("sourceURL", redactSecrets(sourceURL)).Info("session: no video or audio stream")
+		return nil, http.StatusUnsupportedMediaType, ErrNoPlayableStreams.Error()
+	}
 
 	// Create session
 	sess := s.sessionManager.Create(SessionConfig{
@@ -442,7 +450,7 @@ func (s *Web) legacyProbeHandler(w http.ResponseWriter, r *http.Request) {
 // the source can never be transcoded by this deployment, or "" for transient
 // internal failures (which must stay generic to avoid leaking internals).
 func unsupportedContentReason(err error) string {
-	for _, e := range []error{ErrResolutionNotSupported, ErrTranscodingDisabled} {
+	for _, e := range []error{ErrResolutionNotSupported, ErrTranscodingDisabled, ErrNoPlayableStreams} {
 		if errors.Is(err, e) {
 			return e.Error()
 		}
@@ -629,6 +637,12 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 			http.Error(w, "master playlist not found", http.StatusNotFound)
 			return
 		}
+	} else if isSubtitlePlaylist(name) && sess.h != nil && sess.h.subtitleWithoutOutput(name) {
+		// A track FFmpeg is never asked to convert (a bitmap, no decoder):
+		// the empty playlist at once. Through the wait below it cost 5 s per
+		// poll and a playlist_waits_total tick each time, and hls.js
+		// re-polls a live playlist with no segments every few seconds.
+		data = emptySubtitlePlaylist(sess.RunStart())
 	} else {
 		// Ensure FFmpeg is running (may have been released due to inactivity)
 		if !sess.IsRunning() {
