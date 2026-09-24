@@ -8,11 +8,16 @@ import (
 	"strings"
 )
 
+// adtsScalableError is FFmpeg refusing to wrap a copied AAC stream in the
+// ADTS headers mpegts needs: the stream's AudioSpecificConfig says it depends
+// on a core coder. Seen on m4b audiobooks, which failed on every run.
+const adtsScalableError = "Scalable configurations are not allowed in ADTS"
+
 const (
 	// stderrTailBytes bounds what is read back from ffmpeg.err: the cause
-	// of a failure sits in the last few lines, and a long run's stderr grew
-	// to 1.7 MB of progress output.
-	stderrTailBytes = 4096
+	// of a failure sits near the end, and a long run's stderr grew to 1.7 MB
+	// of progress output.
+	stderrTailBytes = 16384
 	// stderrTailLines is how many lines of that are logged.
 	stderrTailLines = 15
 )
@@ -64,7 +69,7 @@ func stderrTail(path string) string {
 	var lines []string
 	for i, l := range all {
 		l = strings.TrimSpace(l)
-		if l == "" || (isProgressLine(l) && i != lastProgress) {
+		if l == "" || (isProgressLine(l) && i != lastProgress) || isMuxerNoise(l) {
 			continue
 		}
 		lines = append(lines, l)
@@ -89,6 +94,15 @@ func failureKey(tail string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// muxerNoisePattern matches what the segment muxer prints on its way out for
+// every output -- one playlist rewrite and one size summary each. A run with
+// a dozen outputs pushed the actual error out of the tail with them.
+var muxerNoisePattern = regexp.MustCompile(`Opening '.*' for writing|muxing overhead`)
+
+func isMuxerNoise(l string) bool {
+	return muxerNoisePattern.MatchString(l)
 }
 
 // isProgressLine reports FFmpeg's periodic stats line ("frame= ..." with

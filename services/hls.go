@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	cp "github.com/webtor-io/content-prober/content-prober"
 )
@@ -15,6 +16,7 @@ import (
 const (
 	HLSAACCodecFlag             = "hls-aac-codec"
 	DisableVideoTranscodingFlag = "disable-video-transcoding"
+	FFmpegThreadsFlag           = "ffmpeg-threads"
 )
 
 func RegisterHLSFlags(f []cli.Flag) []cli.Flag {
@@ -27,6 +29,11 @@ func RegisterHLSFlags(f []cli.Flag) []cli.Flag {
 		Name:   DisableVideoTranscodingFlag,
 		Usage:  "disable video transcoding",
 		EnvVar: "DISABLE_VIDEO_TRANSCODING",
+	}, cli.IntFlag{
+		Name:   FFmpegThreadsFlag,
+		Usage:  "threads per FFmpeg decoder, encoder and filter graph; -1 sizes them from the container's CPU quota, 0 leaves them to FFmpeg",
+		EnvVar: "FFMPEG_THREADS",
+		Value:  -1,
 	})
 }
 
@@ -153,7 +160,19 @@ type HLS struct {
 	cfg     *HLSConfig
 }
 
+// ParamOptions adjust a run's FFmpeg arguments beyond what the probe says.
+type ParamOptions struct {
+	// EncodeAudio encodes AAC audio the probe says can be copied. Set after
+	// a copy failed on it (see adtsScalableError): some AAC streams carry a
+	// configuration the mpegts muxer's ADTS headers cannot express.
+	EncodeAudio bool
+}
+
 func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
+	return h.GetFFmpegParamsWith(out, ParamOptions{})
+}
+
+func (h *HLS) GetFFmpegParamsWith(out string, opts ParamOptions) ([]string, error) {
 
 	parsedURL, err := u.Parse(h.in)
 	if err != nil {
@@ -173,6 +192,15 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 		}
 	}
 	params := []string{}
+	// Thread pools sized to the CPU the container may use (see
+	// cpuQuotaThreads). FFmpeg sizes them from the cores it can see: 32 on
+	// a worker node under a 1-CPU quota, 92-117 threads per run, and the
+	// quota throttled 43% of periods. Measured on the prod EPYC at 1 CPU:
+	// 1.6-1.9x faster 1080p x264, 860 -> 220 MB RSS. -threads before -i
+	// sizes the decoders; the encoder gets its own below.
+	if t := h.cfg.threads; t > 0 {
+		params = append(params, "-filter_threads", strconv.Itoa(t), "-threads", strconv.Itoa(t))
+	}
 	// if h.sm == Online {
 	// 	params = append(params, "-re")
 	// }
@@ -185,10 +213,10 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 		"-seekable", "1",
 	)
 	for _, s := range h.primary {
-		params = append(params, s.GetFFmpegParams(out)...)
+		params = append(params, s.ffmpegParams(out, opts)...)
 	}
 	for _, s := range h.audio {
-		params = append(params, s.GetFFmpegParams(out)...)
+		params = append(params, s.ffmpegParams(out, opts)...)
 	}
 	for _, s := range h.subs {
 		// Subtitles FFmpeg cannot turn into webvtt keep their entry in the
@@ -198,7 +226,7 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 		if !s.hasTextDecoder() {
 			continue
 		}
-		params = append(params, s.GetFFmpegParams(out)...)
+		params = append(params, s.ffmpegParams(out, opts)...)
 	}
 	return params, nil
 }
@@ -258,6 +286,10 @@ func (h *HLSStream) GetSegmentFormat() string {
 }
 
 func (h *HLSStream) GetCodecParams() []string {
+	return h.codecParams(ParamOptions{})
+}
+
+func (h *HLSStream) codecParams(opts ParamOptions) []string {
 	params := []string{
 		fmt.Sprintf("-c:%v", h.st),
 	}
@@ -276,7 +308,10 @@ func (h *HLSStream) GetCodecParams() []string {
 			"-bufsize", fmt.Sprintf("%vK", uint(float64(h.r.Rate())*1.5)),
 			"-pix_fmt", "yuv420p",
 		)
-	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2) {
+		if h.cfg != nil && h.cfg.threads > 0 {
+			params = append(params, "-threads", strconv.Itoa(h.cfg.threads))
+		}
+	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2 || opts.EncodeAudio) {
 		params = append(
 			params,
 			h.cfg.aacCodec,
@@ -303,6 +338,10 @@ func (h *HLSStream) IsCopy() bool {
 }
 
 func (h *HLSStream) GetFFmpegParams(out string) []string {
+	return h.ffmpegParams(out, ParamOptions{})
+}
+
+func (h *HLSStream) ffmpegParams(out string, opts ParamOptions) []string {
 
 	// Mapped by the input stream's own index. h.index is this stream's
 	// number among the streams NewHLS keeps (it names the outputs: v0, a1,
@@ -322,11 +361,12 @@ func (h *HLSStream) GetFFmpegParams(out string) []string {
 	}
 
 	// For transcoded streams (not copy), force exact segment boundaries
-	if !h.IsCopy() {
+	codec := h.codecParams(opts)
+	if codec[len(codec)-1] != "copy" {
 		params = append(params, "-break_non_keyframes", "1")
 	}
 
-	params = append(params, h.GetCodecParams()...)
+	params = append(params, codec...)
 	if h.r != nil {
 		params = append(params, fmt.Sprintf("%v/%v%v-%v-%%d.%v", out, h.st, h.index, h.r.Height, h.GetSegmentExtension()))
 	} else {
@@ -496,18 +536,28 @@ func (s *HLS) MakeMasterPlaylist(out string) error {
 type HLSBuilder struct {
 	aacCodec                string
 	disableVideoTranscoding bool
+	threads                 int
 }
 
 type HLSConfig struct {
 	sm                      StreamMode
 	aacCodec                string
 	disableVideoTranscoding bool
+	// threads per FFmpeg decoder, encoder and filter graph; 0 leaves the
+	// sizing to FFmpeg.
+	threads int
 }
 
 func NewHLSBuilder(c *cli.Context) *HLSBuilder {
+	threads := c.Int(FFmpegThreadsFlag)
+	if threads < 0 {
+		threads = cpuQuotaThreads()
+	}
+	log.WithField("threads", threads).Info("hls: FFmpeg threads per decoder/encoder (0 = FFmpeg decides)")
 	return &HLSBuilder{
 		aacCodec:                c.String(HLSAACCodecFlag),
 		disableVideoTranscoding: c.Bool(DisableVideoTranscodingFlag),
+		threads:                 threads,
 	}
 }
 
@@ -516,5 +566,6 @@ func (s *HLSBuilder) Build(in string, probe *cp.ProbeReply) *HLS {
 		sm:                      Online,
 		aacCodec:                s.aacCodec,
 		disableVideoTranscoding: s.disableVideoTranscoding,
+		threads:                 s.threads,
 	})
 }

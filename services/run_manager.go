@@ -23,7 +23,11 @@ type RunManager struct {
 	// reported (see rememberRealStart): the offset a key answers must
 	// survive the run object being reaped.
 	realStarts map[string]float64
-	done       chan struct{}
+	// encodeAudio remembers, per source (hashDir), that its AAC audio
+	// cannot be copied (TranscodeRun.encodeAudio), so a seek does not spend
+	// a failed run to find out again.
+	encodeAudio map[string]bool
+	done        chan struct{}
 	closed     bool
 }
 
@@ -35,8 +39,9 @@ type managedRun struct {
 func NewRunManager() *RunManager {
 	m := &RunManager{
 		runs:       make(map[string]*managedRun),
-		realStarts: make(map[string]float64),
-		done:       make(chan struct{}),
+		realStarts:  make(map[string]float64),
+		encodeAudio: make(map[string]bool),
+		done:        make(chan struct{}),
 	}
 	go m.reaper()
 	return m
@@ -70,6 +75,15 @@ func (m *RunManager) rememberRealStart(key string, v float64) {
 	m.realStarts[key] = v
 }
 
+func (m *RunManager) rememberEncodeAudio(hashDir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.encodeAudio) > 8192 {
+		m.encodeAudio = map[string]bool{}
+	}
+	m.encodeAudio[hashDir] = true
+}
+
 // newRunLocked builds a run wired into this manager's real-start memory:
 // it reports what it resolves (rememberRealStart), and it starts preset
 // with the offset this key once reported, surviving the run object — the
@@ -80,6 +94,8 @@ func (m *RunManager) rememberRealStart(key string, v float64) {
 func (m *RunManager) newRunLocked(key, hashDir string, seekTime float64, sourceURL string, h *HLS) *TranscodeRun {
 	run := newTranscodeRun(key, hashDir, seekTime, sourceURL, h)
 	run.onRealStart = m.rememberRealStart
+	run.onEncodeAudio = m.rememberEncodeAudio
+	run.encodeAudio = m.encodeAudio[hashDir]
 	if v, ok := m.realStarts[key]; ok {
 		run.realStart = v
 		run.realStartResolved = true

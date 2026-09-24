@@ -76,6 +76,17 @@ type TranscodeRun struct {
 	// started is when the current FFmpeg process was spawned. Guarded by mu.
 	started time.Time
 
+	// encodeAudio encodes AAC audio the probe would copy (ParamOptions).
+	// Set when a run died on adtsScalableError, and preset by the run
+	// manager for every later run of the same source. Guarded by mu.
+	encodeAudio bool
+	// onEncodeAudio tells the run manager this source needs it.
+	onEncodeAudio func(hashDir string)
+
+	// firstSegment is how long the current process took to its first
+	// segment, 0 until then (watchFirstSegment). Guarded by mu.
+	firstSegment time.Duration
+
 	// lastFailure is the stderr tail of the last failure that was logged,
 	// with per-process addresses stripped (see sameFailure). Only
 	// reapProcess touches it, and one process is reaped at a time.
@@ -185,7 +196,7 @@ func (r *TranscodeRun) startLocked() error {
 		return errors.Wrap(err, "failed to create run dir")
 	}
 
-	params, err := r.h.GetFFmpegParams(r.outputDir)
+	params, err := r.h.GetFFmpegParamsWith(r.outputDir, ParamOptions{EncodeAudio: r.encodeAudio})
 	if err != nil {
 		return errors.Wrap(err, "failed to get ffmpeg params")
 	}
@@ -254,7 +265,12 @@ func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
 		if r.seekTime > 0 {
 			start = runStartSeek
 		}
-		go watchFirstSegment(r.h.primary[0].GetPlaylistPath(r.outputDir)+".ffmpeg", r.started, r.done, mode, start)
+		r.firstSegment = 0
+		go watchFirstSegment(r.h.primary[0].GetPlaylistPath(r.outputDir)+".ffmpeg", r.started, r.done, mode, start, func(d time.Duration) {
+			r.mu.Lock()
+			r.firstSegment = d
+			r.mu.Unlock()
+		})
 	}
 	go r.reapProcess(closers...)
 }
@@ -271,12 +287,14 @@ const firstSegmentPoll = 200 * time.Millisecond
 // writes the playlist file only then. A restart reuses the run dir, so a
 // playlist left by the previous process does not count -- only one written
 // after started. Gives up when the process ends first.
-func watchFirstSegment(playlist string, started time.Time, done <-chan struct{}, mode, start string) {
+func watchFirstSegment(playlist string, started time.Time, done <-chan struct{}, mode, start string, found func(time.Duration)) {
 	t := time.NewTicker(firstSegmentPoll)
 	defer t.Stop()
 	for {
 		if fi, err := os.Stat(playlist); err == nil && !fi.ModTime().Before(started) {
-			metricRunFirstSegmentSeconds.WithLabelValues(mode, start).Observe(time.Since(started).Seconds())
+			d := time.Since(started)
+			metricRunFirstSegmentSeconds.WithLabelValues(mode, start).Observe(d.Seconds())
+			found(d)
 			return
 		}
 		select {
@@ -318,6 +336,7 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 	r.mu.Lock()
 	stopReason := r.stopReason
 	started := r.started
+	firstSegment := r.firstSegment
 	if waitErr == nil {
 		r.completed = true
 	}
@@ -332,11 +351,29 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 	// Speed at the end, whatever ended it: FFmpeg's figure is cumulative
 	// (media time over wall time since start). Under 30 s of media it is
 	// mostly startup and says little about keeping up.
-	if mode := r.runMode(); mode != "" {
-		if media, speed, ok := lastProgress(tail); ok && media >= minSpeedMediaSeconds {
-			metricRunSpeed.WithLabelValues(mode).Observe(speed)
-		}
+	mode := r.runMode()
+	media, speed, progressOK := lastProgress(tail)
+	if mode != "" && progressOK && media >= minSpeedMediaSeconds {
+		metricRunSpeed.WithLabelValues(mode).Observe(speed)
 	}
+	// One line per process, whatever ended it: the per-run numbers the
+	// histograms aggregate, with the source path (credentials redacted) so a
+	// run can be joined with how torrent-http-proxy served its source.
+	endFields := log.Fields{
+		"outcome":  outcome,
+		"mode":     mode,
+		"seekTime": fmt.Sprintf("%.3f", r.seekTime),
+		"ranFor":   time.Since(started).Round(100 * time.Millisecond).String(),
+		"source":   redactSecrets(r.sourceURL),
+	}
+	if firstSegment > 0 {
+		endFields["firstSegment"] = firstSegment.Round(10 * time.Millisecond).String()
+	}
+	if progressOK {
+		endFields["media"] = fmt.Sprintf("%.1f", media)
+		endFields["speed"] = speed
+	}
+	r.logger.WithFields(endFields).Info("run: ffmpeg ended")
 
 	switch {
 	case outcome == runOutcomeFailed:
@@ -345,6 +382,22 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 		// was logged, 15% of runs failed with no trace of why. Read before
 		// done closes, so no restart can have truncated it yet.
 		metricFFmpegFailuresTotal.WithLabelValues(failureCause(tail, reason)).Inc()
+		// A copied AAC stream the mpegts muxer cannot wrap: every restart
+		// would die the same way. The next start encodes the audio instead
+		// (a restart the player's next request triggers anyway), and so do
+		// later runs of the source.
+		if strings.Contains(tail, adtsScalableError) {
+			r.mu.Lock()
+			first := !r.encodeAudio
+			r.encodeAudio = true
+			r.mu.Unlock()
+			if first {
+				r.logger.Warn("run: copied AAC cannot go into ADTS, encoding the audio from the next start")
+				if r.onEncodeAudio != nil {
+					r.onEncodeAudio(r.hashDir)
+				}
+			}
+		}
 		// A source that cannot be converted fails the same way on each of
 		// its 5 auto-restarts: logged once, and again only if it changes.
 		fields := log.Fields{
