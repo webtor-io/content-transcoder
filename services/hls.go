@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -17,6 +18,7 @@ const (
 	HLSAACCodecFlag             = "hls-aac-codec"
 	DisableVideoTranscodingFlag = "disable-video-transcoding"
 	FFmpegThreadsFlag           = "ffmpeg-threads"
+	PaceLeadFlag                = "pace-lead"
 )
 
 func RegisterHLSFlags(f []cli.Flag) []cli.Flag {
@@ -34,6 +36,11 @@ func RegisterHLSFlags(f []cli.Flag) []cli.Flag {
 		Usage:  "threads per FFmpeg decoder, encoder and filter graph; -1 sizes them from the container's CPU quota, 0 leaves them to FFmpeg",
 		EnvVar: "FFMPEG_THREADS",
 		Value:  -1,
+	}, cli.DurationFlag{
+		Name:   PaceLeadFlag,
+		Usage:  "how far (media time) FFmpeg may get ahead of the furthest requested segment before it is frozen; 0 disables pacing",
+		EnvVar: "PACE_LEAD",
+		Value:  5 * time.Minute,
 	})
 }
 
@@ -212,7 +219,11 @@ func (h *HLS) GetFFmpegParamsWith(out string, opts ParamOptions) ([]string, erro
 	// if h.sm == Online {
 	// 	params = append(params, "-re")
 	// }
+	// Reconnect a dropped source connection (resuming with a Range request)
+	// instead of failing: a run pacing holds frozen leaves its connection
+	// idle, and torrent-http-proxy retries a lost seeder on another pod.
 	params = append(params,
+		"-reconnect", "1", "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5",
 		"-fix_sub_duration",
 		"-i", parsedURL.String(),
 		// "-err_detect", "ignore_err",
@@ -547,6 +558,7 @@ type HLSBuilder struct {
 	aacCodec                string
 	disableVideoTranscoding bool
 	threads                 int
+	paceLead                time.Duration
 }
 
 type HLSConfig struct {
@@ -556,6 +568,9 @@ type HLSConfig struct {
 	// threads per FFmpeg decoder, encoder and filter graph; 0 leaves the
 	// sizing to FFmpeg.
 	threads int
+	// paceLead is how far ahead of its viewers a run may get (pacing.go);
+	// 0 disables pacing.
+	paceLead time.Duration
 }
 
 func NewHLSBuilder(c *cli.Context) *HLSBuilder {
@@ -564,10 +579,13 @@ func NewHLSBuilder(c *cli.Context) *HLSBuilder {
 		threads = cpuQuotaThreads()
 	}
 	log.WithField("threads", threads).Info("hls: FFmpeg threads per decoder/encoder (0 = FFmpeg decides)")
+	paceLead := c.Duration(PaceLeadFlag)
+	logPaceConfig(paceLead)
 	return &HLSBuilder{
 		aacCodec:                c.String(HLSAACCodecFlag),
 		disableVideoTranscoding: c.Bool(DisableVideoTranscodingFlag),
 		threads:                 threads,
+		paceLead:                paceLead,
 	}
 }
 
@@ -577,5 +595,6 @@ func (s *HLSBuilder) Build(in string, probe *cp.ProbeReply) *HLS {
 		aacCodec:                s.aacCodec,
 		disableVideoTranscoding: s.disableVideoTranscoding,
 		threads:                 s.threads,
+		paceLead:                s.paceLead,
 	})
 }

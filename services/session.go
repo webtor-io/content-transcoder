@@ -228,6 +228,16 @@ func (s *Session) Touch() {
 
 // noteSegmentServed resets the auto-restart budget: a produced segment is
 // proof the current run works, so earlier failed attempts stop counting.
+// noteDemand tells the session's run that a viewer asked for segment n.
+func (s *Session) noteDemand(n int) {
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		run.noteDemand(n)
+	}
+}
+
 func (s *Session) noteSegmentServed() {
 	s.mu.Lock()
 	s.restartFails = 0

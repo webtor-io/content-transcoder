@@ -126,6 +126,29 @@ Viewer B closes              → Release(Run#1, refCount=0) → grace 30s → cl
 
 When refCount drops to 0, the run enters a 30-second grace period before cleanup. This allows a viewer who seeks away and then seeks back to reuse the same run without restarting FFmpeg.
 
+### Pacing
+
+A run is kept from getting too far ahead of its viewers (`services/pacing.go`).
+
+**Why.** Measured on 2026-09-25 over 16 h of runs released for inactivity: copy runs produced a median 11 min of media, and at least 93% of it could never have been watched. For audio-only runs it was 99%, with p90 5.8 h ahead of the viewer. All of that was torrent data read from a seeder and written to the node's disk, and for re-encodes it was also CPU taken from the other runs on the pod.
+
+**How.**
+- The run tracks demand: the furthest segment number any session has requested from it. `sessionSegmentHandler` records it through `Session.noteDemand`.
+- A per-process loop polls every second whether the primary stream's segment `demand + lead` exists.
+  - If it does, FFmpeg's process group is frozen with `SIGSTOP`.
+  - It is continued with `SIGCONT` once segment `demand + lead − 60 s` no longer exists, i.e. a viewer has come within 4 minutes. The 60 s gap is hysteresis, so the run advances in bursts of about a minute.
+- `PACE_LEAD` (flag `--pace-lead`) sets the lead. The default is 5 min; `0` disables pacing.
+- Before the first request demand counts as 0, so the first lead of every run is produced at full speed and start-up is untouched.
+
+**Details.**
+- A frozen process's source connection just idles. Neither torrent-http-proxy nor the seeder sets read/write timeouts. `-reconnect 1 -reconnect_on_network_error 1` on the input resumes a dropped connection with a Range request.
+- Stopping a frozen run needs nothing special. Stop cancels the run's context, and `exec.CommandContext` kills the process with `SIGKILL`, which a stopped process does not hold back.
+- A new process of the run (a restart) resets demand, because segment numbers start over.
+- Speed (`transcoder_run_speed`, the `speed` field of `run: ffmpeg ended`) is media time over the time FFmpeg was allowed to run. FFmpeg's own `speed=` counts frozen time too.
+- Metrics:
+  - `transcoder_runs_paused`: processes frozen right now;
+  - `transcoder_run_pause_seconds_total{mode}`: total time processes spent frozen.
+
 ## FFmpeg Seek Strategy
 
 ### Copy Mode (h264 source → `-c:v copy`)

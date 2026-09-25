@@ -84,6 +84,13 @@ type TranscodeRun struct {
 	// onFallbacks tells the run manager what this source needs.
 	onFallbacks func(hashDir string, opts ParamOptions)
 
+	// demand is the furthest segment number any viewer has asked this run
+	// for, -1 before the first request; paused whether pace has FFmpeg
+	// frozen, pausedFor the total time it was. Guarded by mu.
+	demand    int
+	paused    bool
+	pausedFor time.Duration
+
 	// firstSegment is how long the current process took to its first
 	// segment, 0 until then (watchFirstSegment). Guarded by mu.
 	firstSegment time.Duration
@@ -111,6 +118,7 @@ func newTranscodeRun(key, hashDir string, seekTime float64, sourceURL string, h 
 		outputDir: outputDir,
 		sourceURL: sourceURL,
 		h:         h,
+		demand:    -1,
 		runCtx:    runCtx,
 		runCancel: runCancel,
 		logger: log.WithFields(log.Fields{
@@ -260,7 +268,12 @@ func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
 	r.running = true
 	r.stopReason = ""
 	r.started = time.Now()
+	r.demand = -1
+	r.pausedFor = 0
 	metricRunsActive.Inc()
+	if r.h != nil && r.h.cfg != nil && r.h.cfg.paceLead > 0 && len(r.h.primary) > 0 && r.cmd != nil && r.cmd.Process != nil {
+		go r.pace(r.cmd.Process.Pid, r.h.cfg.paceLead, r.done, r.runMode())
+	}
 	if mode := r.runMode(); mode != "" {
 		start := runStartZero
 		if r.seekTime > 0 {
@@ -338,6 +351,7 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 	stopReason := r.stopReason
 	started := r.started
 	firstSegment := r.firstSegment
+	pausedFor := r.pausedFor
 	if waitErr == nil {
 		r.completed = true
 	}
@@ -354,6 +368,11 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 	// mostly startup and says little about keeping up.
 	mode := r.runMode()
 	media, speed, progressOK := lastProgress(tail)
+	// FFmpeg's speed counts wall time, the time pace held it frozen too;
+	// the transcoder's speed is over the time it was allowed to run.
+	if s, ok := activeSpeed(media, time.Since(started), pausedFor); progressOK && ok {
+		speed = s
+	}
 	if mode != "" && progressOK && media >= minSpeedMediaSeconds {
 		metricRunSpeed.WithLabelValues(mode).Observe(speed)
 	}
@@ -373,6 +392,9 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 	if progressOK {
 		endFields["media"] = fmt.Sprintf("%.1f", media)
 		endFields["speed"] = speed
+	}
+	if pausedFor > 0 {
+		endFields["paused"] = pausedFor.Round(time.Second).String()
 	}
 	r.logger.WithFields(endFields).Info("run: ffmpeg ended")
 

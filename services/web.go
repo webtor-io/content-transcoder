@@ -743,6 +743,11 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess *Session, filename string) {
 	sess.Touch()
 
+	// The run's pacing holds FFmpeg this far ahead of what viewers ask for.
+	if n, err := parseSegmentNumber("/" + filename); err == nil {
+		sess.noteDemand(n)
+	}
+
 	// If FFmpeg is not running, auto-restart from the right position
 	if !sess.IsRunning() {
 		segNum, err := parseSegmentNumber("/" + filename)

@@ -158,6 +158,16 @@ var (
 		Help:      "FFmpeg's speed (media time over wall time) when a run ends, for runs that produced at least 30 s of media, by mode. Below 1 the viewer outruns the transcoder.",
 		Buckets:   speedBuckets,
 	}, []string{"mode"})
+	metricRunPauseSeconds = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsNamespace,
+		Name:      "run_pause_seconds_total",
+		Help:      "Time FFmpeg processes spent frozen by pacing (ahead of every viewer by the pace lead), by mode.",
+	}, []string{"mode"})
+	metricRunsPaused = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricsNamespace,
+		Name:      "runs_paused",
+		Help:      "FFmpeg processes currently frozen by pacing.",
+	})
 	metricFFmpegFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricsNamespace,
 		Name:      "ffmpeg_failures_total",
@@ -193,6 +203,7 @@ func init() {
 	}
 	for _, m := range []string{runModeCopy, runModeReencode, runModeAudio} {
 		metricRunSpeed.WithLabelValues(m)
+		metricRunPauseSeconds.WithLabelValues(m)
 		for _, s := range []string{runStartZero, runStartSeek} {
 			metricRunFirstSegmentSeconds.WithLabelValues(m, s)
 		}
