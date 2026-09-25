@@ -186,10 +186,8 @@ github.com/vmihailenco/tagparser v0.1.2 h1:gnjoVuB/kljJ5wICEEOpx98oXMWPLj22G67Vb
 github.com/vmihailenco/tagparser v0.1.2/go.mod h1:OeAg3pn3UbLjkWt+rN9oFYB6u/cQgqMEUPoW2WPyhdI=
 github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
-github.com/webtor-io/common-services v0.0.0-20251108105453-635ef47a01ea h1:gtoEk8QoRuNcro/Ls6WZA6b9jikuvjonrZ34HhqOBwg=
-github.com/webtor-io/common-services v0.0.0-20251108105453-635ef47a01ea/go.mod h1:KWg/F34uDg+IU52yry3jgh0mCloYRMCzpHuU/WRJL2E=
-github.com/webtor-io/common-services v0.0.0-20260924165121-39d5e0fb95a0 h1:nMpTNUlZO/0SsA4CHMKKoGenUbknPq7M7osWe7bQF0s=
-github.com/webtor-io/common-services v0.0.0-20260924165121-39d5e0fb95a0/go.mod h1:jSGKiO/KVhavntTXhPXzjvt3sMMbCIYaCnxMhOklvEQ=
+github.com/webtor-io/common-services v0.0.0-20260925142105-6ffe7f0e19ed h1:8cyWpMa/HZFKM6WVkYMxF5kB1XOf27h8SJlw4v4KoA4=
+github.com/webtor-io/common-services v0.0.0-20260925142105-6ffe7f0e19ed/go.mod h1:fGQvvhjUFUXUYzgCyAiLWcF0S7gJltL3WslsEQ9Swlk=
 github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415 h1:8eDD+z0mOqEjBwVcMmhdITnu0utqbx+GgFjMjJ6Scts=
 github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415/go.mod h1:FJnGLg2A5mjOE6IhsdVJA3KkG73QE3OPIy3IZbVJBQ0=
 github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4 h1:IzqyT2MZFfDc4Dat89c3BV8vmIbiMl5sDg84uSIyQGA=
