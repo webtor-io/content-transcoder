@@ -109,7 +109,7 @@ func TestADTSFailureSwitchesToEncodedAudio(t *testing.T) {
 	startFakeProcess(t, r, "false")
 	<-r.done
 	r.mu.Lock()
-	got := r.encodeAudio
+	got := r.fallbacks.EncodeAudio
 	r.mu.Unlock()
 	if !got {
 		t.Fatal("the run must encode the audio after an ADTS failure")
@@ -117,13 +117,13 @@ func TestADTSFailureSwitchesToEncodedAudio(t *testing.T) {
 	m.mu.Lock()
 	seek := m.newRunLocked(runKey(dir, 600), dir, 600, "http://src/book.m4b", h)
 	m.mu.Unlock()
-	if !seek.encodeAudio {
+	if !seek.fallbacks.EncodeAudio {
 		t.Error("a later run of the same source must start with encoded audio")
 	}
 	m.mu.Lock()
 	other := m.newRunLocked(runKey(t.TempDir(), 0), t.TempDir(), 0, "http://src/other.m4b", h)
 	m.mu.Unlock()
-	if other.encodeAudio {
+	if other.fallbacks.EncodeAudio {
 		t.Error("another source must keep copying")
 	}
 }
@@ -179,4 +179,66 @@ func TestRunEndLogLine(t *testing.T) {
 		return
 	}
 	t.Error("no run: ffmpeg ended line")
+}
+
+// -xerror made FFmpeg's timestamp repairs fatal on every start of some
+// sources (seek runs, without -xerror, played them). After such a failure
+// the source runs without -xerror; everything else keeps it.
+func TestTimestampsFailureDropsXerrorForTheSource(t *testing.T) {
+	h := testHLS(testStream(0, "video", "h264"), testStream(1, "audio", "aac"))
+	if indexOf(ffmpegParams(t, h), "-xerror") < 0 {
+		t.Fatal("-xerror is the default")
+	}
+	p, err := h.GetFFmpegParamsWith("/out", ParamOptions{Lenient: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexOf(p, "-xerror") >= 0 {
+		t.Fatal("Lenient must drop -xerror")
+	}
+
+	dir := t.TempDir()
+	m := NewRunManager()
+	defer m.CloseAll()
+	m.mu.Lock()
+	r := m.newRunLocked(runKey(dir, 0), dir, 0, "http://src/f.avi", h)
+	m.mu.Unlock()
+	if err := os.MkdirAll(r.outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stderr := "[vost#0:0/copy @ 0x1] Non-monotonic DTS; previous: 171675, current: 168030; Error submitting a packet to the muxer: Invalid argument\nConversion failed!\n"
+	if err := os.WriteFile(filepath.Join(r.outputDir, "ffmpeg.err"), []byte(stderr), 0644); err != nil {
+		t.Fatal(err)
+	}
+	startFakeProcess(t, r, "false")
+	<-r.done
+	r.mu.Lock()
+	got := r.fallbacks
+	r.mu.Unlock()
+	if !got.Lenient || got.EncodeAudio {
+		t.Fatalf("fallbacks = %+v, want Lenient only", got)
+	}
+	m.mu.Lock()
+	next := m.newRunLocked(runKey(dir, 0), dir, 0, "http://src/f.avi", h)
+	m.mu.Unlock()
+	if !next.fallbacks.Lenient {
+		t.Error("the source's next run must start without -xerror")
+	}
+
+	// Another failure (not timestamps) changes nothing.
+	dir2 := t.TempDir()
+	m.mu.Lock()
+	r2 := m.newRunLocked(runKey(dir2, 0), dir2, 0, "http://src/g.mkv", h)
+	m.mu.Unlock()
+	if err := os.MkdirAll(r2.outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r2.outputDir, "ffmpeg.err"), []byte("Error during demuxing: I/O error\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	startFakeProcess(t, r2, "false")
+	<-r2.done
+	if r2.fallbacks != (ParamOptions{}) {
+		t.Errorf("an I/O failure must not relax -xerror: %+v", r2.fallbacks)
+	}
 }

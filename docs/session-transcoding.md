@@ -147,6 +147,10 @@ ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ...
 - `-ss` before `-i` here too (`injectSeekParams` places it there in both modes). FFmpeg seeks the input to the keyframe before `{time}` using the container index, then decodes and discards frames up to `{time}` (accurate seek is the default).
 - Perfect A/V sync: both streams are decoded and start from the exact position.
 - On any seek (`{time}` > 0), `-xerror` is removed. AVI and other containers report non-fatal errors after a seek, and `-xerror` would turn them into a failed run.
+- From the start (`{time}` = 0) `-xerror` stays. Without it, a failed read of the source ends FFmpeg like the end of the file: exit 0, a completed run, and it is never restarted.
+- Per-source fallbacks (`ParamOptions`, remembered by the RunManager per source). When a run dies on a failure a known option cures, that source's later runs get the option:
+  - timestamps (`Non-monotonic DTS` / `Invalid DTS` under `-xerror`) → `Lenient`, which drops `-xerror`;
+  - `Scalable configurations are not allowed in ADTS` → `EncodeAudio`, which re-encodes AAC the probe would copy.
 
 ## Player (player/index.html)
 

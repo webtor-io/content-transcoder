@@ -23,10 +23,10 @@ type RunManager struct {
 	// reported (see rememberRealStart): the offset a key answers must
 	// survive the run object being reaped.
 	realStarts map[string]float64
-	// encodeAudio remembers, per source (hashDir), that its AAC audio
-	// cannot be copied (TranscodeRun.encodeAudio), so a seek does not spend
-	// a failed run to find out again.
-	encodeAudio map[string]bool
+	// fallbacks remembers, per source (hashDir), the FFmpeg options a failed
+	// run of it turned out to need (TranscodeRun.fallbacks), so a seek does
+	// not spend a failed run to find out again.
+	fallbacks map[string]ParamOptions
 	done        chan struct{}
 	closed     bool
 }
@@ -40,7 +40,7 @@ func NewRunManager() *RunManager {
 	m := &RunManager{
 		runs:       make(map[string]*managedRun),
 		realStarts:  make(map[string]float64),
-		encodeAudio: make(map[string]bool),
+		fallbacks:   make(map[string]ParamOptions),
 		done:        make(chan struct{}),
 	}
 	go m.reaper()
@@ -75,13 +75,13 @@ func (m *RunManager) rememberRealStart(key string, v float64) {
 	m.realStarts[key] = v
 }
 
-func (m *RunManager) rememberEncodeAudio(hashDir string) {
+func (m *RunManager) rememberFallbacks(hashDir string, opts ParamOptions) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.encodeAudio) > 8192 {
-		m.encodeAudio = map[string]bool{}
+	if len(m.fallbacks) > 8192 {
+		m.fallbacks = map[string]ParamOptions{}
 	}
-	m.encodeAudio[hashDir] = true
+	m.fallbacks[hashDir] = opts
 }
 
 // newRunLocked builds a run wired into this manager's real-start memory:
@@ -94,8 +94,8 @@ func (m *RunManager) rememberEncodeAudio(hashDir string) {
 func (m *RunManager) newRunLocked(key, hashDir string, seekTime float64, sourceURL string, h *HLS) *TranscodeRun {
 	run := newTranscodeRun(key, hashDir, seekTime, sourceURL, h)
 	run.onRealStart = m.rememberRealStart
-	run.onEncodeAudio = m.rememberEncodeAudio
-	run.encodeAudio = m.encodeAudio[hashDir]
+	run.onFallbacks = m.rememberFallbacks
+	run.fallbacks = m.fallbacks[hashDir]
 	if v, ok := m.realStarts[key]; ok {
 		run.realStart = v
 		run.realStartResolved = true

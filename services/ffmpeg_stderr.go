@@ -13,6 +13,15 @@ import (
 // on a core coder. Seen on m4b audiobooks, which failed on every run.
 const adtsScalableError = "Scalable configurations are not allowed in ADTS"
 
+// timestampsFailure reports a run -xerror killed over timestamps FFmpeg
+// would otherwise repair: "Non-monotonic DTS ... Error submitting a packet"
+// and "Invalid DTS ... replacing by guess" in its stderr (2026-09-25: about
+// 8 of 34 failing sources a day, all on seek-0 runs, the only ones with
+// -xerror).
+func timestampsFailure(tail string) bool {
+	return strings.Contains(tail, "Non-monotonic DTS") || strings.Contains(tail, "Invalid DTS")
+}
+
 const (
 	// stderrTailBytes bounds what is read back from ffmpeg.err: the cause
 	// of a failure sits near the end, and a long run's stderr grew to 1.7 MB

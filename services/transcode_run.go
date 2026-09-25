@@ -76,12 +76,13 @@ type TranscodeRun struct {
 	// started is when the current FFmpeg process was spawned. Guarded by mu.
 	started time.Time
 
-	// encodeAudio encodes AAC audio the probe would copy (ParamOptions).
-	// Set when a run died on adtsScalableError, and preset by the run
-	// manager for every later run of the same source. Guarded by mu.
-	encodeAudio bool
-	// onEncodeAudio tells the run manager this source needs it.
-	onEncodeAudio func(hashDir string)
+	// fallbacks are the ParamOptions this source turned out to need: set
+	// when a run died on a failure they cure (adtsScalableError,
+	// timestampsFailure), and preset by the run manager for every later run
+	// of the same source. Guarded by mu.
+	fallbacks ParamOptions
+	// onFallbacks tells the run manager what this source needs.
+	onFallbacks func(hashDir string, opts ParamOptions)
 
 	// firstSegment is how long the current process took to its first
 	// segment, 0 until then (watchFirstSegment). Guarded by mu.
@@ -196,7 +197,7 @@ func (r *TranscodeRun) startLocked() error {
 		return errors.Wrap(err, "failed to create run dir")
 	}
 
-	params, err := r.h.GetFFmpegParamsWith(r.outputDir, ParamOptions{EncodeAudio: r.encodeAudio})
+	params, err := r.h.GetFFmpegParamsWith(r.outputDir, r.fallbacks)
 	if err != nil {
 		return errors.Wrap(err, "failed to get ffmpeg params")
 	}
@@ -386,16 +387,24 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 		// would die the same way. The next start encodes the audio instead
 		// (a restart the player's next request triggers anyway), and so do
 		// later runs of the source.
+		r.mu.Lock()
+		before := r.fallbacks
 		if strings.Contains(tail, adtsScalableError) {
-			r.mu.Lock()
-			first := !r.encodeAudio
-			r.encodeAudio = true
-			r.mu.Unlock()
-			if first {
-				r.logger.Warn("run: copied AAC cannot go into ADTS, encoding the audio from the next start")
-				if r.onEncodeAudio != nil {
-					r.onEncodeAudio(r.hashDir)
-				}
+			r.fallbacks.EncodeAudio = true
+		}
+		// Seek runs never have -xerror, so for them there is nothing to drop.
+		if r.seekTime == 0 && timestampsFailure(tail) {
+			r.fallbacks.Lenient = true
+		}
+		after := r.fallbacks
+		r.mu.Unlock()
+		if after != before {
+			r.logger.WithFields(log.Fields{
+				"encodeAudio": after.EncodeAudio,
+				"lenient":     after.Lenient,
+			}).Warn("run: switching FFmpeg options for this source from the next start")
+			if r.onFallbacks != nil {
+				r.onFallbacks(r.hashDir, after)
 			}
 		}
 		// A source that cannot be converted fails the same way on each of

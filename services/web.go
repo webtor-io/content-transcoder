@@ -22,6 +22,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 	"github.com/urfave/cli"
+	cs "github.com/webtor-io/common-services"
 
 	cp "github.com/webtor-io/content-prober/content-prober"
 	_ "github.com/webtor-io/content-transcoder/docs"
@@ -62,6 +63,9 @@ type Web struct {
 	hlsBuilder     *HLSBuilder
 	sessionManager *SessionManager
 	touchMap       *TouchMap
+	// gs drains in-flight requests on Close, up to WEB_SHUTDOWN_TIMEOUT,
+	// instead of dropping them with the listener.
+	gs *cs.GracefulServer
 }
 
 func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, sessionManager *SessionManager, touchMap *TouchMap) *Web {
@@ -74,6 +78,7 @@ func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, 
 		hlsBuilder:     hlsBuilder,
 		sessionManager: sessionManager,
 		touchMap:       touchMap,
+		gs:             cs.NewGracefulServer(cs.ShutdownTimeout(c)),
 	}
 	we.buildHandler()
 	return we
@@ -156,29 +161,45 @@ func parseSegmentNumber(urlPath string) (int, error) {
 	return strconv.Atoi(parts[len(parts)-1])
 }
 
-func (s *Web) Serve() error {
+// Listen binds the web port. It runs before any servable starts: the probe
+// answers Ready as soon as it listens, and during a rollout the old pod is
+// retired on that -- a new pod must not read Ready with its port unbound.
+func (s *Web) Listen() error {
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return errors.Wrap(err, "failed to bind address")
 	}
 	s.ln = ln
-	log.Infof("serving Web at %v", addr)
-	if s.player {
-		log.Info(fmt.Sprintf("player available at http://%v/player/", addr))
-	}
-	return http.Serve(ln, s.handler)
+	return nil
 }
 
+func (s *Web) Serve() error {
+	if s.ln == nil {
+		if err := s.Listen(); err != nil {
+			return err
+		}
+	}
+	log.Infof("serving Web at %v", s.ln.Addr())
+	if s.player {
+		log.Info(fmt.Sprintf("player available at http://%v/player/", s.ln.Addr()))
+	}
+	return s.gs.Serve(&http.Server{Handler: s.handler}, s.ln)
+}
+
+// Close drains in-flight requests first and only then closes the sessions.
+// The other way round -- what it did until 2026-09 -- killed every FFmpeg
+// under requests still waiting on it: a segment a viewer was about to get
+// became an error. During the drain the runs keep producing, so a request
+// waiting for a segment can still be answered; long waits (up to 5 min for a
+// playlist or segment) are cut at the shutdown timeout.
 func (s *Web) Close() {
 	log.Info("closing Web")
 	defer func() {
 		log.Info("Web closed")
 	}()
+	s.gs.Close()
 	s.sessionManager.CloseAll()
-	if s.ln != nil {
-		_ = s.ln.Close()
-	}
 }
 
 // --- Session API handlers ---

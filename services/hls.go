@@ -166,6 +166,14 @@ type ParamOptions struct {
 	// a copy failed on it (see adtsScalableError): some AAC streams carry a
 	// configuration the mpegts muxer's ADTS headers cannot express.
 	EncodeAudio bool
+	// Lenient drops -xerror. It makes FFmpeg's routine timestamp repairs
+	// fatal ("Non-monotonic DTS", "Invalid DTS"), which killed some sources
+	// on every start while the seek runs of the same files (which never had
+	// -xerror) played. Not the default: without -xerror a failed read of
+	// the source ends the run like the end of the file (exit 0, a
+	// completed run, no restart), so it is set only for a source that
+	// failed on timestamps (see timestampsFailure).
+	Lenient bool
 }
 
 func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
@@ -209,9 +217,11 @@ func (h *HLS) GetFFmpegParamsWith(out string, opts ParamOptions) ([]string, erro
 		"-i", parsedURL.String(),
 		// "-err_detect", "ignore_err",
 		// "-reconnect_at_eof", "1",
-		"-xerror",
-		"-seekable", "1",
 	)
+	if !opts.Lenient {
+		params = append(params, "-xerror")
+	}
+	params = append(params, "-seekable", "1")
 	for _, s := range h.primary {
 		params = append(params, s.ffmpegParams(out, opts)...)
 	}

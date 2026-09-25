@@ -108,6 +108,12 @@ github.com/mailru/easyjson v0.7.6 h1:8yTIVnZgCoiM1TgqoeTl+LfU5Jg6/xL3QhGQnimLYnA
 github.com/mailru/easyjson v0.7.6/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
+github.com/nats-io/nats.go v1.48.0 h1:pSFyXApG+yWU/TgbKCjmm5K4wrHu86231/w84qRVR+U=
+github.com/nats-io/nats.go v1.48.0/go.mod h1:iRWIPokVIFbVijxuMQq4y9ttaBTMe0SFdlZfMDd+33g=
+github.com/nats-io/nkeys v0.4.11 h1:q44qGV008kYd9W1b1nEBkNzvnWxtRSQ7A8BoqRrcfa0=
+github.com/nats-io/nkeys v0.4.11/go.mod h1:szDimtgmfOi9n25JpfIdGw12tZFYXqhGxjhVxsatHVE=
+github.com/nats-io/nuid v1.0.1 h1:5iA8DT8V7q8WK2EScv2padNa/rTESc1KdnPw4TC2paw=
+github.com/nats-io/nuid v1.0.1/go.mod h1:19wcPz3Ph3q0Jbyiqsd0kePYG7A95tJPxeL+1OSON2c=
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/nxadm/tail v1.4.4 h1:DQuhQpB1tVlglWS2hLQ5OV6B5r8aGxSrPc5Qo6uTN78=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
@@ -182,6 +188,8 @@ github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAh
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
 github.com/webtor-io/common-services v0.0.0-20251108105453-635ef47a01ea h1:gtoEk8QoRuNcro/Ls6WZA6b9jikuvjonrZ34HhqOBwg=
 github.com/webtor-io/common-services v0.0.0-20251108105453-635ef47a01ea/go.mod h1:KWg/F34uDg+IU52yry3jgh0mCloYRMCzpHuU/WRJL2E=
+github.com/webtor-io/common-services v0.0.0-20260924165121-39d5e0fb95a0 h1:nMpTNUlZO/0SsA4CHMKKoGenUbknPq7M7osWe7bQF0s=
+github.com/webtor-io/common-services v0.0.0-20260924165121-39d5e0fb95a0/go.mod h1:jSGKiO/KVhavntTXhPXzjvt3sMMbCIYaCnxMhOklvEQ=
 github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415 h1:8eDD+z0mOqEjBwVcMmhdITnu0utqbx+GgFjMjJ6Scts=
 github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415/go.mod h1:FJnGLg2A5mjOE6IhsdVJA3KkG73QE3OPIy3IZbVJBQ0=
 github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4 h1:IzqyT2MZFfDc4Dat89c3BV8vmIbiMl5sDg84uSIyQGA=
