@@ -19,9 +19,10 @@ import (
 // fastPacing runs the pace loop at test speed for the duration of a test.
 func fastPacing(t *testing.T) {
 	t.Helper()
-	poll, gap := pacePoll, paceResumeGap
+	poll, gap, stall := pacePoll, paceResumeGap, paceResumeStall
 	pacePoll, paceResumeGap = 20*time.Millisecond, 8*time.Second // resume 2 segments closer than the lead
-	t.Cleanup(func() { pacePoll, paceResumeGap = poll, gap })
+	paceResumeStall = 200 * time.Millisecond
+	t.Cleanup(func() { pacePoll, paceResumeGap, paceResumeStall = poll, gap, stall })
 }
 
 // pacedRun is a copy-mode run (h264 1080p video, AAC audio) with the given
@@ -177,6 +178,64 @@ func TestPaceFreezesAndReleasesTheProcess(t *testing.T) {
 
 	writeSegments(t, r, 9) // 3+5 = segment 8 exists: the lead ahead again
 	eventually(t, "frozen again", func() bool { return stopped(t, pid) })
+}
+
+// frozenThenReleased freezes a run with a lead of 5 segments (segments 0..5
+// written) and lets it go by moving demand to 3, where segment 6 is the
+// first FFmpeg has not started.
+func frozenThenReleased(t *testing.T) *TranscodeRun {
+	t.Helper()
+	r := pacedRun(t, 20*time.Second)
+	startFakeProcess(t, r, "sleep", "30")
+	t.Cleanup(r.Stop)
+	pid := r.cmd.Process.Pid
+	writeSegments(t, r, 6)
+	eventually(t, "frozen at the lead", func() bool { return stopped(t, pid) })
+	r.noteDemand(3)
+	eventually(t, "continued", func() bool { return !stopped(t, pid) })
+	return r
+}
+
+func TestResumeTimesTheNextSegment(t *testing.T) {
+	fastPacing(t)
+	paceResumeStall = 5 * time.Second // longer than the test: no stall here
+	labels := map[string]string{"mode": runModeCopy}
+	seg0 := histogramCount(t, "transcoder_run_resume_segment_seconds", labels)
+	stalls0 := counter(t, metricRunResumeStalls.WithLabelValues(runModeCopy))
+
+	r := frozenThenReleased(t)
+	never(t, "timed before the next segment started", func() bool {
+		return histogramCount(t, "transcoder_run_resume_segment_seconds", labels) != seg0
+	})
+	writeSegments(t, r, 7) // segment 6 starts
+	eventually(t, "the next segment timed", func() bool {
+		return histogramCount(t, "transcoder_run_resume_segment_seconds", labels) == seg0+1
+	})
+	if got := counter(t, metricRunResumeStalls.WithLabelValues(runModeCopy)) - stalls0; got != 0 {
+		t.Errorf("run_resume_stalls_total = +%v for a run that went on, want 0", got)
+	}
+}
+
+// A released run that starts no segment is a stall, counted once however
+// long it lasts; the segment arriving later is still timed.
+func TestResumeStallCountedOnce(t *testing.T) {
+	fastPacing(t)
+	labels := map[string]string{"mode": runModeCopy}
+	stalls0 := counter(t, metricRunResumeStalls.WithLabelValues(runModeCopy))
+	seg0 := histogramCount(t, "transcoder_run_resume_segment_seconds", labels)
+
+	r := frozenThenReleased(t)
+	eventually(t, "the stall counted", func() bool {
+		return counter(t, metricRunResumeStalls.WithLabelValues(runModeCopy))-stalls0 == 1
+	})
+	time.Sleep(3 * paceResumeStall)
+	if got := counter(t, metricRunResumeStalls.WithLabelValues(runModeCopy)) - stalls0; got != 1 {
+		t.Errorf("run_resume_stalls_total = +%v, want +1 per resume", got)
+	}
+	writeSegments(t, r, 7)
+	eventually(t, "the late segment timed", func() bool {
+		return histogramCount(t, "transcoder_run_resume_segment_seconds", labels) == seg0+1
+	})
 }
 
 // Negative control: with pacing off the process is never frozen however far

@@ -163,6 +163,17 @@ var (
 		Name:      "run_pause_seconds_total",
 		Help:      "Time FFmpeg processes spent frozen by pacing (ahead of every viewer by the pace lead), by mode.",
 	}, []string{"mode"})
+	metricRunResumeSegmentSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: metricsNamespace,
+		Name:      "run_resume_segment_seconds",
+		Help:      "Time from pacing letting a frozen FFmpeg go (SIGCONT) to it starting the next primary segment, by mode. Resumes that never get one are only in run_resume_stalls_total.",
+		Buckets:   firstSegmentBuckets,
+	}, []string{"mode"})
+	metricRunResumeStalls = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsNamespace,
+		Name:      "run_resume_stalls_total",
+		Help:      "Resumes after which FFmpeg started no new primary segment within 30 s, by mode; counted once, when the 30 s pass.",
+	}, []string{"mode"})
 	metricRunsPaused = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: metricsNamespace,
 		Name:      "runs_paused",
@@ -204,6 +215,8 @@ func init() {
 	for _, m := range []string{runModeCopy, runModeReencode, runModeAudio} {
 		metricRunSpeed.WithLabelValues(m)
 		metricRunPauseSeconds.WithLabelValues(m)
+		metricRunResumeSegmentSeconds.WithLabelValues(m)
+		metricRunResumeStalls.WithLabelValues(m)
 		for _, s := range []string{runStartZero, runStartSeek} {
 			metricRunFirstSegmentSeconds.WithLabelValues(m, s)
 		}

@@ -29,6 +29,11 @@ var (
 	// before the run continues: a minute of hysteresis, so a run moves in
 	// bursts of about a minute instead of a segment at a time.
 	paceResumeGap = 60 * time.Second
+	// paceResumeStall is how long a released run may go without starting a
+	// new primary segment before the resume counts as stalled. A copy or
+	// re-encode run with a live source starts one within a few seconds; on
+	// 2026-09-25 a resumed run started none for 15 min.
+	paceResumeStall = 30 * time.Second
 )
 
 // paceSegments converts a media duration to a count of sessionSegDuration
@@ -56,6 +61,22 @@ func (r *TranscodeRun) primarySegmentPath(n int) string {
 	return r.outputDir + "/" + name
 }
 
+// firstMissingSegment is the lowest primary segment at or after the
+// furthest viewer demand that FFmpeg has not started (segment files appear
+// when FFmpeg opens them).
+func (r *TranscodeRun) firstMissingSegment() int {
+	r.mu.Lock()
+	n := r.demand
+	r.mu.Unlock()
+	if n < 0 {
+		n = 0
+	}
+	for fileExists(r.primarySegmentPath(n)) {
+		n++
+	}
+	return n
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
@@ -72,14 +93,29 @@ func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, m
 	t := time.NewTicker(pacePoll)
 	defer t.Stop()
 	var pausedAt time.Time
+	// After a resume: the first primary segment FFmpeg had not started when
+	// it was let go (-1 when not watching), and whether the wait for it has
+	// already been counted as a stall.
+	var (
+		resumedAt    time.Time
+		waitSeg      = -1
+		stallCounted bool
+	)
 	pause := func(on bool) {
 		sig := syscall.SIGCONT
 		if on {
 			sig = syscall.SIGSTOP
 		}
+		next := -1
+		if !on {
+			// Found while FFmpeg is still frozen, so the segment it starts
+			// right after SIGCONT is the one timed.
+			next = r.firstMissingSegment()
+		}
 		if err := syscall.Kill(-pid, sig); err != nil {
 			return
 		}
+		resumedAt, waitSeg, stallCounted = time.Now(), next, false
 		r.mu.Lock()
 		r.paused = on
 		if on {
@@ -124,6 +160,22 @@ func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, m
 		r.mu.Unlock()
 		if demand < 0 {
 			demand = 0
+		}
+		if waitSeg >= 0 {
+			since := time.Since(resumedAt)
+			switch {
+			case fileExists(r.primarySegmentPath(waitSeg)):
+				metricRunResumeSegmentSeconds.WithLabelValues(mode).Observe(since.Seconds())
+				waitSeg = -1
+			case !stallCounted && since >= paceResumeStall:
+				stallCounted = true
+				metricRunResumeStalls.WithLabelValues(mode).Inc()
+				r.logger.WithFields(log.Fields{
+					"segment": waitSeg,
+					"demand":  demand,
+					"since":   since.Round(time.Second),
+				}).Warn("run: no new segment after pacing let FFmpeg go")
+			}
 		}
 		switch {
 		case !paused && fileExists(r.primarySegmentPath(demand+leadSegs)):
