@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -76,6 +78,15 @@ type TranscodeRun struct {
 	// started is when the current FFmpeg process was spawned. Guarded by mu.
 	started time.Time
 
+	// generation names the FFmpeg process whose files are in outputDir. A
+	// new process gets a new one (watchProcessLocked): a restart writes the
+	// segments again, from zero, under the same names. Segment validators
+	// are made of it (segmentETag), so a copy of a file written by another
+	// process -- of another run, or an earlier one of this run -- never
+	// validates. Set at construction too, so no run is without one. Guarded
+	// by mu.
+	generation string
+
 	// fallbacks are the ParamOptions this source turned out to need: set
 	// when a run died on a failure they cure (adtsScalableError,
 	// timestampsFailure), and preset by the run manager for every later run
@@ -112,15 +123,16 @@ func newTranscodeRun(key, hashDir string, seekTime float64, sourceURL string, h 
 	outputDir := filepath.Join(hashDir, "runs", seekDir)
 	runCtx, runCancel := context.WithCancel(context.Background())
 	return &TranscodeRun{
-		key:       key,
-		hashDir:   hashDir,
-		seekTime:  seekTime,
-		outputDir: outputDir,
-		sourceURL: sourceURL,
-		h:         h,
-		demand:    -1,
-		runCtx:    runCtx,
-		runCancel: runCancel,
+		key:        key,
+		hashDir:    hashDir,
+		seekTime:   seekTime,
+		outputDir:  outputDir,
+		sourceURL:  sourceURL,
+		h:          h,
+		demand:     -1,
+		generation: newRunGeneration(),
+		runCtx:     runCtx,
+		runCancel:  runCancel,
 		logger: log.WithFields(log.Fields{
 			"runKey": key,
 		}),
@@ -268,6 +280,7 @@ func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
 	r.running = true
 	r.stopReason = ""
 	r.started = time.Now()
+	r.generation = newRunGeneration()
 	r.demand = -1
 	r.pausedFor = 0
 	metricRunsActive.Inc()
@@ -565,6 +578,22 @@ func (r *TranscodeRun) IsRunning() bool {
 // OutputDir returns the directory where segments are written.
 func (r *TranscodeRun) OutputDir() string {
 	return r.outputDir
+}
+
+// Generation names the FFmpeg process that writes the run's files now (see
+// generation).
+func (r *TranscodeRun) Generation() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.generation
+}
+
+// newRunGeneration returns a name no other run process gets: not on this
+// pod, and not on another pod of the node, which shares the output dir.
+func newRunGeneration() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // isVideoCopy returns true if the primary video stream uses copy mode.

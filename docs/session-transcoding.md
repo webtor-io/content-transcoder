@@ -35,7 +35,22 @@ to avoid leaking internals.
 2. If FFmpeg is not running → re-acquire run at current `seekTime`
 3. Wait for segment file to appear on disk (200ms polling, 5min timeout)
 4. Return early if FFmpeg exits without producing the segment
-5. Serve file via `http.ServeFile`
+5. Serve the file of the session's current run (`serveSegment`): `Cache-Control: no-cache`, a strong `ETag`, no `Last-Modified`
+
+#### Caching: validators name the run, not a date
+
+A session URL outlives the run behind it. `/session/{id}/v0-720-0.ts` means "segment 0 of whatever run the session points at now", and a seek changes the bytes without changing the name. That is why segments and playlists go out with `Cache-Control: no-cache`: the browser must revalidate every time.
+
+What a revalidation returns depends on the validator:
+
+- **Segments (`.ts`, `.vtt`)** carry `ETag: "<generation>-<size hex>"`. The generation is a random name given to each FFmpeg process of a run (`TranscodeRun.generation`, renewed in `watchProcessLocked`).
+  - Within one process a segment file is written once and only appended to, so its size identifies its state. A copy taken while FFmpeg was still writing therefore does not validate the finished file.
+  - Any other run, or another process of the same run (an auto-restart rewrites the files from 0), has a different generation. A copy from it never validates, even when the sizes match. Audio and subtitle segments of two runs can match to the byte.
+  - `If-None-Match` within one process returns 304, as cheap as before.
+- **No `Last-Modified`.** Until 2026-09-26 `http.ServeFile` validated segments by mtime. A seek into a run left by an earlier viewer (still within its grace period) served files older than the browser's copy from the run it had just left. `If-Modified-Since` then returned 304, and the player played the pre-seek bytes on the new run's clock: 0:00–0:16 shown as 19:30–19:46. `ServeContent` gets a zero modtime, so it ignores `If-Modified-Since` and a dated `If-Range`. A copy with only a date gets the full segment.
+- **Playlists** are rebuilt on every request and go out with no validator, so they are always 200.
+
+Re-downloads this costs compared with date validation: none within one run process. The extra downloads fall in three cases, and each is a case where the bytes did or could change: after a seek, including a seek back to a run the browser had cached earlier (the cache holds one copy per URL, the last run's); after an auto-restart of the run; and a segment first fetched while it was still being written.
 
 #### Auto-Restart Budget
 

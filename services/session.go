@@ -455,6 +455,20 @@ func (s *Session) SegmentPath(filename string) string {
 	return filepath.Join(dir, filename)
 }
 
+// segmentFile is SegmentPath plus the generation of the run process that
+// writes the file, both taken from one run: a seek swaps the run between
+// two separate reads, and the validator must name the run whose file is
+// served. Empty when the session has no run.
+func (s *Session) segmentFile(filename string) (path, generation string) {
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run == nil {
+		return "", ""
+	}
+	return filepath.Join(run.OutputDir(), filename), run.Generation()
+}
+
 // WaitForPlaylist polls until the playlist file appears (max timeout).
 // Returns early if the FFmpeg run is no longer active.
 func (s *Session) WaitForPlaylist(ctx context.Context, name string, timeout time.Duration) ([]byte, error) {

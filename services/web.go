@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -787,15 +788,75 @@ func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess
 
 	// A session URL outlives the run behind it: /session/{id}/v0-720-0.ts is
 	// "segment zero of whatever the session points at now", and a seek swaps
-	// the bytes without changing the name. With no Cache-Control and no ETag,
-	// browsers fall back to heuristic freshness and replay the previous run's
+	// the bytes without changing the name. With no Cache-Control, browsers
+	// fell back to heuristic freshness and replayed the previous run's
 	// segments — seeking anywhere restarted the movie from the beginning.
-	// no-cache still allows a conditional request: ServeFile answers an
-	// unchanged segment with a cheap 304 via Last-Modified.
+	// no-cache makes them ask every time; what a revalidation gets is up to
+	// the validator (serveSegment).
 	w.Header().Set("Cache-Control", "no-cache")
 
-	// Serve the file
-	http.ServeFile(w, r, sess.SegmentPath(filename))
+	s.serveSegment(w, r, sess, filename)
+}
+
+// serveSegment answers with the file of the session's current run, validated
+// by an ETag naming the run process that wrote it and its size
+// (segmentETag), and by nothing else.
+//
+// Not by Last-Modified, which is what http.ServeFile used until 2026-09-26.
+// An mtime says when a file was written, not which run wrote it, and a seek
+// can land on a run left by a viewer a few minutes earlier, whose files are
+// OLDER than the ones the browser holds from the run it left. Chrome's
+// If-Modified-Since then came back 304 and the player played the cached
+// pre-seek bytes on the new run's clock: 0:00–0:16 shown as 19:30–19:46, the
+// 60,912 B segment 0 of the run at 0:00 instead of the 5,065,848 B of the run
+// at 19:30 (Chrome 154, 3 of 3 seeks into such a run). Within one second
+// the same date also confirmed a copy taken while FFmpeg was still writing
+// the file.
+//
+// The zero modtime keeps ServeContent from sending Last-Modified and from
+// reading If-Modified-Since or a dated If-Range at all: a copy that carries
+// only a date — cached before this change, or by a client that knows no
+// ETags — gets the whole segment.
+func (s *Web) serveSegment(w http.ResponseWriter, r *http.Request, sess *Session, filename string) {
+	// The generation before the file: if a new process of the run starts in
+	// between, these bytes go out under a generation no later request is
+	// given, i.e. they can cost a download but never confirm a copy.
+	path, generation := sess.segmentFile(filename)
+	if path == "" {
+		// The run was released after WaitForSegment. ServeFile("") answered
+		// this with a 301 to "<name>/", a listing of the working directory.
+		http.Error(w, "segment not found", http.StatusNotFound)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		http.Error(w, "segment not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		http.Error(w, "segment not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("ETag", segmentETag(generation, fi.Size()))
+	// Exactly the bytes the ETag names: FFmpeg may still be appending.
+	http.ServeContent(w, r, filename, time.Time{}, io.NewSectionReader(f, 0, fi.Size()))
+}
+
+// segmentETag is the strong validator of a segment response: the generation
+// of the run process that wrote the file (TranscodeRun.generation) and the
+// file's size. Another run, or another process of the same run, has another
+// generation, so its copy never validates, whatever the sizes and dates — the
+// size alone would not do: audio and subtitle segments of two runs can match
+// to the byte. Within one process a segment file is written once and only
+// appended to (the segment muxer opens each file once; mpegts and webvtt
+// never seek back), so the size names its state, and a copy taken mid-write
+// does not validate the finished file. The name is not in it: a browser
+// compares a validator only with its copy of the same URL, which names the
+// file. Strong, because If-Range (resuming a download) compares strongly.
+func segmentETag(generation string, size int64) string {
+	return fmt.Sprintf(`"%s-%x"`, generation, size)
 }
 
 // playlistFilePattern matches segment and playlist references in HLS playlists.
