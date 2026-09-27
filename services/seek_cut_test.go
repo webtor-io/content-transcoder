@@ -56,14 +56,24 @@ func cutsIn(args []string) (cut []string, ss int) {
 	return cut, ss
 }
 
-func TestReencodeSeekCuts_CopiedAudioOnly(t *testing.T) {
-	if got := seekCutHLS("hevc").reencodeSeekCuts(ParamOptions{}); !reflect.DeepEqual(got, []string{"0:1"}) {
-		t.Errorf("cuts %v, want only the copied AAC track 0:1", got)
+func TestReencodeSeekCuts_CopiedAudioAndSubtitles(t *testing.T) {
+	if got := seekCutHLS("hevc").reencodeSeekCuts(ParamOptions{}); !reflect.DeepEqual(got, []string{"0:1", "0:4"}) {
+		t.Errorf("cuts %v, want the copied AAC track 0:1 and the subrip output 0:4 (not the dvd_subtitle one, which has no output)", got)
 	}
 	// A source that needs its AAC encoded (EncodeAudio after an ADTS
-	// failure) has every track through the input trim: nothing to cut.
-	if got := seekCutHLS("hevc").reencodeSeekCuts(ParamOptions{EncodeAudio: true}); len(got) != 0 {
-		t.Errorf("EncodeAudio: cuts %v, want none", got)
+	// failure) has every audio track through the input trim; the
+	// subtitles still need the cut.
+	if got := seekCutHLS("hevc").reencodeSeekCuts(ParamOptions{EncodeAudio: true}); !reflect.DeepEqual(got, []string{"0:4"}) {
+		t.Errorf("EncodeAudio: cuts %v, want the subtitle output only", got)
+	}
+	// A webvtt track is copied, not encoded: cut all the same.
+	v := NewHLS("http://src/movie.mkv", &cp.ProbeReply{Streams: []*cp.Stream{
+		{Index: 0, CodecType: "video", CodecName: "vp9", Height: 720},
+		{Index: 1, CodecType: "subtitle", CodecName: "webvtt"},
+		{Index: 2, CodecType: "subtitle", CodecName: "ass"},
+	}}, &HLSConfig{sm: Online, aacCodec: "libfdk_aac"})
+	if got := v.reencodeSeekCuts(ParamOptions{}); !reflect.DeepEqual(got, []string{"0:1", "0:2"}) {
+		t.Errorf("webvtt and ass subtitles: cuts %v, want both", got)
 	}
 	// Audio-only: the track is the primary, not in h.audio.
 	a := NewHLS("http://src/book.m4a", &cp.ProbeReply{Streams: []*cp.Stream{
@@ -87,15 +97,17 @@ func TestCutAtOutputStart(t *testing.T) {
 }
 
 // A seek run of a re-encoded video puts -ss 0 before the -map of the copied
-// audio track and nowhere else; a run from the start, a copy-route seek and
-// a source whose audio is encoded get no cut at all. Negative control: with
-// the cut out of startLocked the first case fails (no cut).
-func TestReencodeSeekRun_CutsCopiedAudioAtTheSeek(t *testing.T) {
+// audio track and of the subtitle output and nowhere else; a run from the
+// start and a copy-route seek get no cut at all, a source whose audio is
+// encoded only the subtitles'. Negative control: with the cut out of
+// startLocked the first case fails (no cut), and with the subtitles out of
+// reencodeSeekCuts the subtitle case does.
+func TestReencodeSeekRun_CutsCopiedAudioAndSubtitlesAtTheSeek(t *testing.T) {
 	args := startedArgs(t, seekCutHLS("hevc"), 30, ParamOptions{})
 	cut, ss := cutsIn(args)
-	for _, m := range []string{"0:1"} {
+	for _, m := range []string{"0:1", "0:4"} {
 		if !containsString(cut, m) {
-			t.Errorf("re-encode seek: copied audio %s not cut at the seek point: %v", m, strings.Join(args, " "))
+			t.Errorf("re-encode seek: output %s not cut at the seek point: %v", m, strings.Join(args, " "))
 		}
 	}
 	for _, m := range []string{"0:0", "0:2", "0:3"} {
@@ -117,8 +129,8 @@ func TestReencodeSeekRun_CutsCopiedAudioAtTheSeek(t *testing.T) {
 	if cut, ss := cutsIn(copyArgs); ss != 1 || len(cut) != 0 || !strings.Contains(strings.Join(copyArgs, " "), "-ss 30.000 -noaccurate_seek -i ") {
 		t.Errorf("copy route seek: its input seek only; got %d -ss, cuts %v: %v", ss, cut, copyArgs)
 	}
-	if cut, _ := cutsIn(startedArgs(t, seekCutHLS("hevc"), 30, ParamOptions{EncodeAudio: true})); len(cut) != 0 {
-		t.Errorf("EncodeAudio: every track is encoded and trimmed, no cut; got %v", cut)
+	if cut, _ := cutsIn(startedArgs(t, seekCutHLS("hevc"), 30, ParamOptions{EncodeAudio: true})); !reflect.DeepEqual(cut, []string{"0:4"}) {
+		t.Errorf("EncodeAudio: every audio track is encoded and trimmed, only the subtitles are cut; got %v", cut)
 	}
 }
 

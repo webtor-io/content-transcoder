@@ -1742,6 +1742,8 @@
         "-c:a",
         "copy",
         "\u003cOUT\u003e/f930ccba54f2dfeef10af73c51795f63cc49d71b/runs/seek-600.000/a1-%d.ts",
+        "-ss",
+        "0",
         "-map",
         "0:4",
         "-f",

@@ -17,7 +17,10 @@ package services
 //   - a seek run of a re-encoded video cuts each copied audio track at the
 //     seek point: "-ss", "0" before its "-map" (hevc-1080-main10-aac,
 //     hevc-2560x1080, hevc-cover-art-first: 0:1 or 0:2, their only track;
-//     hevc-800-ac3-dvdsub: 0:2, the AAC one, not the encoded AC3).
+//     hevc-800-ac3-dvdsub: 0:2, the AAC one, not the encoded AC3);
+//   - and each subtitle output there: "-ss", "0" before its "-map"
+//     (hevc-800-ac3-dvdsub: 0:4, the subrip track; the dvd_subtitle one has
+//     no output).
 
 import (
 	"context"

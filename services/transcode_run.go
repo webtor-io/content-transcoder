@@ -728,7 +728,8 @@ func removeParam(params []string, flag string) []string {
 // streams it decodes: the trim is a filter at the input of the stream's
 // filter graph (fftools/ffmpeg_filter.c insert_trim). A copied stream has no
 // graph and starts at the keyframe the demuxer landed on, up to a GOP
-// earlier; the run cuts those outputs itself (cutAtOutputStart).
+// earlier, and so do subtitles; the run cuts those outputs itself
+// (cutAtOutputStart).
 //
 // Input-level -ss is always used because output-level -ss (after -i) causes
 // video segments to appear much later than audio when re-encoding.
@@ -776,7 +777,8 @@ func cutAtOutputStart(params []string, maps []string) []string {
 
 // reencodeSeekCuts are the -map values of the outputs a seek run of a
 // re-encoded video cuts at the seek point (cutAtOutputStart), with the
-// run's current options: every audio track that is copied.
+// run's current options: every audio track that is copied, and every
+// subtitle output.
 //
 // The input seek lands on the keyframe at or before the seek point (for an
 // MKV with B-frames at or before the seek point minus 3/23 s,
@@ -792,12 +794,34 @@ func cutAtOutputStart(params []string, maps []string) []string {
 // 10 s longer than the video's. With the cut: -83 ms, against -62 ms from
 // the start. An encoded track goes through the trim like the video
 // (EncodeAudio makes every track one) and is left alone. An audio-only
-// source has no h.audio (its track is the primary) and so no cut.
+// source has no h.audio (its track is the primary) and no h.subs, and so
+// no cut.
+//
+// Subtitles never go through a filter graph, encoded to webvtt or copied,
+// and matroskadec does not skip a subtitle block before the keyframe it
+// seeks to (matroskadec.c, skip_to_keyframe is for the other tracks): the
+// cues between where the demuxer landed and the seek point reach the
+// output with negative times, and the output shifts them to zero like the
+// audio's. Every cue after them comes late by the same amount against
+// #EXT-X-SESSION-OFFSET, which on this route is the seek point: measured on
+// 8.1.2, cues at 21 and 26 s were served after a seek to 35 (run at 30),
+// the one at 33 s shown at 12.000 instead of 3.000 -- 9 s late, in hls.js
+// and in subtitle-translate's movie time (cue + offset) alike. With the cut
+// an encoded cue that starts before zero is dropped (ffmpeg_enc.c
+// do_subtitle_out), a copied webvtt one like the audio: the cues land on
+// the offset's timeline, and the one still on screen at the seek point is
+// lost (FFmpeg compares the cue's start).
 func (h *HLS) reencodeSeekCuts(opts ParamOptions) []string {
 	var maps []string
 	for _, a := range h.audio {
 		if c := a.codecParams(opts); c[len(c)-1] == "copy" {
 			maps = append(maps, fmt.Sprintf("0:%d", a.s.GetIndex()))
+		}
+	}
+	for _, s := range h.subs {
+		// A track without a decoder has no output (ffmpegParamsFor).
+		if s.hasTextDecoder() {
+			maps = append(maps, fmt.Sprintf("0:%d", s.s.GetIndex()))
 		}
 	}
 	return maps

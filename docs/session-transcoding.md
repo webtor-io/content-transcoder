@@ -101,7 +101,9 @@ the client only declares what it decodes.
 - **Old route unchanged.** With the capability empty, or without a usable
   declaration, arguments, playlists, refusals and run layout are byte for
   byte those of 1b25e28 (`golden_old_route_test.go` records them there,
-  `golden_route_test.go` replays them).
+  `golden_route_test.go` replays them), apart from the deliberate seek fixes
+  listed in `golden_old_route_test.go` (see
+  [FFmpeg Seek Strategy](#ffmpeg-seek-strategy)).
 - **Output** (`services/passthrough_output.go`, `passthrough_web.go`), see
   [Passthrough output](#passthrough-output).
 
@@ -327,7 +329,7 @@ ffmpeg -ss {time} -noaccurate_seek -i {url} ... -c:v copy ...
 ### Re-encode Mode (mpeg4, vp9, etc. → `-c:v h264`)
 
 ```
-ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ... -ss 0 -map 0:{copied audio} ... -c:a copy ...
+ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ... -ss 0 -map 0:{copied audio} ... -c:a copy ... -ss 0 -map 0:{subtitle} ... -c:s webvtt ...
 ```
 
 - `-ss` before `-i` here too (`injectSeekParams` places it there in both modes). FFmpeg seeks the input to the keyframe before `{time}` using the container index, then decodes and discards frames up to `{time}` (accurate seek is the default).
@@ -341,6 +343,7 @@ ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ... -ss 0 -map 0:{copi
   | After the seek, with the cut | −83 ms | 40.01 s |
 
   hls.js places the audio by its PTS against the video's, so without the cut the sound played 10 s late for the whole run, and the media ended 10 s after the picture. Encoded tracks (AC3, 5.1 AAC, `EncodeAudio`) are left alone: the trim already cuts them.
+- **`-ss 0` on each subtitle output** too. Subtitles never go through a filter graph (encoded to webvtt or copied), and matroskadec does not skip subtitle blocks before the keyframe it seeks to (`skip_to_keyframe` is for the other tracks). The cues between where the demuxer landed and `{time}` came out with negative times, and the output shifted them to zero like the audio's, so every later cue ran late against `#EXT-X-SESSION-OFFSET` (which is `{time}` on this route). Measured on 8.1.2, a seek to 35 (run at 30), cues at 21, 26, 33 s: served at 0.000, 5.000, 12.000 (the 33 s cue 9 s late, in hls.js and in subtitle-translate's cue + offset alike); with the cut, the cue at 33 s at 3.000 and nothing from before 30 s. With the cut an encoded cue that starts before `{time}` is dropped (`ffmpeg_enc.c`, `do_subtitle_out`), a copied webvtt one like copied audio; a cue still on screen at `{time}` is lost with it (FFmpeg compares the cue's start). The error was content-dependent: up to a GOP, and only when a cue fell between the landing keyframe and `{time}`.
 - On any seek (`{time}` > 0), `-xerror` is removed. AVI and other containers report non-fatal errors after a seek, and `-xerror` would turn them into a failed run.
 - From the start (`{time}` = 0) `-xerror` stays. Without it, a failed read of the source ends FFmpeg like the end of the file: exit 0, a completed run, and it is never restarted.
 - Per-source fallbacks (`ParamOptions`, remembered by the RunManager per source). When a run dies on a failure a known option cures, that source's later runs get the option:
