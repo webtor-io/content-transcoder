@@ -1,0 +1,161 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Passthrough e2e</title>
+<style>body{background:#111;color:#ddd;font:12px monospace}video{width:640px;background:#000}</style>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.14/dist/hls.min.js"></script>
+</head>
+<body>
+<video id="v" muted playsinline controls></video>
+<pre id="log"></pre>
+<script>
+// Harness: run(src, {seek, seconds}) creates a passthrough session the way
+// web-ui will (decode tokens from isTypeSupported/decodingInfo, owner
+// decision 27.09: any support counts), plays it with hls.js and reports.
+const CT = 'http://127.0.0.1:18080';
+const Q = 'token=T&api-key=K';
+const log = (...a) => { document.getElementById('log').textContent += a.join(' ') + '\n'; };
+
+// Every SourceBuffer MSE hands out, by MIME type: its buffered ranges show
+// where hls.js put each track on the media timeline.
+const SBS = [];
+const origAdd = MediaSource.prototype.addSourceBuffer;
+MediaSource.prototype.addSourceBuffer = function (mime) {
+  const sb = origAdd.call(this, mime);
+  SBS.push({ mime, sb });
+  return sb;
+};
+function ranges(tr) { const r = []; for (let i = 0; i < tr.length; i++) r.push([+tr.start(i).toFixed(4), +tr.end(i).toFixed(4)]); return r; }
+function sbState() { return SBS.map(x => { try { return { mime: x.mime, buffered: ranges(x.sb.buffered) }; } catch (e) { return { mime: x.mime, error: String(e) }; } }); }
+
+async function tokens() {
+  const ts = (c) => MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`);
+  const out = {};
+  const map = { 'hevc8': 'hvc1.1.6.L123.90', 'hevc10': 'hvc1.2.4.L123.90', 'hevc8-2160': 'hvc1.1.6.L153.90', 'hevc10-2160': 'hvc1.2.4.L153.90', 'hevc-high': 'hvc1.2.4.H153.90' };
+  for (const [t, c] of Object.entries(map)) out[t] = ts(c);
+  try {
+    const r = await navigator.mediaCapabilities.decodingInfo({ type: 'media-source', video: { contentType: 'video/mp4; codecs="hvc1.2.4.L153.90"', width: 3840, height: 2160, bitrate: 25e6, framerate: 24, transferFunction: 'pq', colorGamut: 'rec2020' } });
+    out['hdr-pq'] = !!r.supported; out._pq = r;
+  } catch (e) { out['hdr-pq'] = false; out._pqErr = String(e); }
+  out._decode = Object.keys(map).concat(['hdr-pq']).filter(t => out[t]).join(',');
+  out._ua = navigator.userAgent;
+  out._dynamicRangeHigh = matchMedia('(dynamic-range: high)').matches;
+  return out;
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function play(masterURL, seconds, R, label) {
+  const v = document.getElementById('v');
+  SBS.length = 0;
+  const hls = new Hls({ debug: false, enableWebVTT: true, renderTextTracksNatively: true });
+  const ev = { errors: [], levels: null, fragsLoaded: {}, subtitleTracks: 0 };
+  hls.on(Hls.Events.ERROR, (e, d) => ev.errors.push({ type: d.type, details: d.details, fatal: d.fatal, reason: d.reason || (d.error && String(d.error)) || '' }));
+  hls.on(Hls.Events.MANIFEST_PARSED, (e, d) => { ev.levels = d.levels.map(l => ({ codecs: l.codecSet || l.attrs.CODECS, w: l.width, h: l.height, videoRange: l.videoRange })); ev.subtitleTracks = hls.subtitleTracks.length; });
+  hls.on(Hls.Events.FRAG_LOADED, (e, d) => { const t = d.frag.type; ev.fragsLoaded[t] = (ev.fragsLoaded[t] || 0) + 1; });
+  hls.loadSource(masterURL);
+  hls.attachMedia(v);
+  await new Promise(r => hls.once(Hls.Events.MANIFEST_PARSED, r));
+  if (hls.subtitleTracks.length) { hls.subtitleTrack = 0; hls.subtitleDisplay = true; }
+  const t0 = performance.now();
+  let firstFrame = null;
+  const onFrame = (now, meta) => { if (firstFrame === null) firstFrame = { wallMs: Math.round(now - t0), mediaTime: meta.mediaTime }; };
+  v.requestVideoFrameCallback(onFrame);
+  try { await v.play(); } catch (e) { ev.errors.push({ playError: String(e) }); }
+  const samples = [];
+  for (let i = 0; i < seconds * 2; i++) {
+    await sleep(500);
+    samples.push(+v.currentTime.toFixed(3));
+  }
+  const q = v.getVideoPlaybackQuality();
+  const cues = [];
+  for (const tt of v.textTracks) { if (tt.cues) for (const c of tt.cues) cues.push([+c.startTime.toFixed(3), c.text]); tt.mode = 'hidden'; }
+  const out = {
+    label, levels: ev.levels, errors: ev.errors, fragsLoaded: ev.fragsLoaded,
+    firstFrame, currentTimeFirst: samples[0], currentTimeLast: samples[samples.length - 1],
+    advanced: +(samples[samples.length - 1] - samples[0]).toFixed(3), stalls: samples.filter((x, i) => i > 0 && x === samples[i - 1]).length,
+    videoWidth: v.videoWidth, videoHeight: v.videoHeight,
+    quality: { total: q.totalVideoFrames, dropped: q.droppedVideoFrames, corrupted: q.corruptedVideoFrames },
+    sourceBuffers: sbState(), buffered: ranges(v.buffered), cues, readyState: v.readyState, error: v.error && { code: v.error.code, message: v.error.message },
+  };
+  hls.destroy();
+  v.removeAttribute('src'); v.load();
+  return out;
+}
+
+window.run = async function (src, opts = {}) {
+  const R = { src };
+  R.tokens = await tokens();
+  const decode = opts.decode !== undefined ? opts.decode : R.tokens._decode;
+  const post = await fetch(`${CT}/session?decode=${encodeURIComponent(decode)}&${Q}&source_url=${encodeURIComponent('http://media:8000/' + src)}`, { method: 'POST' });
+  R.post = { status: post.status, body: await post.text() };
+  if (post.status !== 200) return R;
+  const s = JSON.parse(R.post.body);
+  R.play = await play(`${CT}/session/${s.id}/index.m3u8?${Q}`, opts.seconds || 6, R, 'from start');
+  if (opts.seek !== undefined) {
+    const sk = await fetch(`${CT}/session/${s.id}/seek?t=${opts.seek}`, { method: 'POST' });
+    R.seek = await sk.json();
+    R.playSeek = await play(`${CT}/session/${s.id}/index.m3u8?${Q}`, opts.seconds || 6, R, 'after seek');
+  }
+  await fetch(`${CT}/session/${s.id}`, { method: 'DELETE' });
+  return R;
+};
+// A/V as played: on avsync_*.mkv (a white frame and a click at every whole
+// second) the flashes are seen by requestVideoFrameCallback (their media
+// time) and the clicks through WebAudio (the element's
+// currentTime when the click's audio buffer comes through). Coarse (tens of
+// ms of pipeline delay); it is for errors in whole seconds. Needs a user
+// gesture first (AudioContext); from Playwright, click the page.
+window.avsync = async function (src, opts = {}) {
+  const decode = opts.decode !== undefined ? opts.decode : (await tokens())._decode;
+  const post = await fetch(`${CT}/session?decode=${encodeURIComponent(decode)}&${Q}&source_url=${encodeURIComponent('http://media:8000/' + src)}`, { method: 'POST' });
+  const s = JSON.parse(await post.text());
+  if (opts.seek !== undefined) await fetch(`${CT}/session/${s.id}/seek?t=${opts.seek}`, { method: 'POST' });
+  const off = (await (await fetch(`${CT}/session/${s.id}/seek`)).json()).offset;
+  // A fresh element: an element can be routed into WebAudio only once.
+  const v = document.createElement('video');
+  v.playsInline = true; v.width = 320;
+  document.body.appendChild(v);
+  const hls = new Hls();
+  hls.loadSource(`${CT}/session/${s.id}/index.m3u8?${Q}`);
+  hls.attachMedia(v);
+  await new Promise(r => hls.once(Hls.Events.MANIFEST_PARSED, r));
+  v.muted = false;
+  const ac = new AudioContext();
+  await ac.resume();
+  // The element's audio goes into the graph only (the processor writes
+  // silence), so nothing is heard.
+  const node = ac.createMediaElementSource(v);
+  const proc = ac.createScriptProcessor(256, 1, 1);
+  const clicks = [], flashes = [];
+  let loud = false;
+  proc.onaudioprocess = (e) => {
+    const d = e.inputBuffer.getChannelData(0);
+    let m = 0;
+    for (let i = 0; i < d.length; i++) m = Math.max(m, Math.abs(d[i]));
+    if (m > 0.2 && !loud) clicks.push(+v.currentTime.toFixed(3));
+    loud = m > 0.05;
+  };
+  node.connect(proc); proc.connect(ac.destination);
+  const c = document.createElement('canvas'); c.width = c.height = 8;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  const onFrame = (now, meta) => {
+    g.drawImage(v, 0, 0, 8, 8);
+    const px = g.getImageData(0, 0, 8, 8).data;
+    let y = 0; for (let i = 0; i < px.length; i += 4) y += px[i];
+    if (y / 64 > 128) flashes.push(+meta.mediaTime.toFixed(3));
+    v.requestVideoFrameCallback(onFrame);
+  };
+  v.requestVideoFrameCallback(onFrame);
+  await v.play();
+  await sleep((opts.seconds || 6) * 1000);
+  hls.destroy(); proc.disconnect(); await ac.close(); v.remove();
+  await fetch(`${CT}/session/${s.id}`, { method: 'DELETE' });
+  // Movie second of each marker by the session offset.
+  return { route: s.video_route, offset: off, flashes: flashes.map(t => [t, +(t + off).toFixed(3)]), clicks: clicks.map(t => [t, +(t + off).toFixed(3)]) };
+};
+log('ready', navigator.userAgent);
+</script>
+</body>
+</html>

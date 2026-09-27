@@ -1,0 +1,6 @@
+#!/bin/sh
+# Records every ffmpeg call of the transcoder (argv, one per line), then runs it.
+read up _ < /proc/uptime
+f=/calls/$up-ffmpeg-$$
+{ echo "#ffmpeg"; for a in "$@"; do printf '%s\n' "$a"; done; } > "$f"
+exec /bin/ffmpeg "$@"

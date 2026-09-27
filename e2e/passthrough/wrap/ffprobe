@@ -1,0 +1,6 @@
+#!/bin/sh
+# Records every ffprobe call of the transcoder (argv, one per line), then runs it.
+read up _ < /proc/uptime
+f=/calls/$up-ffprobe-$$
+{ echo "#ffprobe"; for a in "$@"; do printf '%s\n' "$a"; done; } > "$f"
+exec /bin/ffprobe "$@"
