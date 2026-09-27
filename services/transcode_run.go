@@ -258,8 +258,13 @@ func (r *TranscodeRun) startLocked() error {
 				realStart, trimAudio = r.realStart, r.h.passthroughAudioMaps()
 			}
 			params = injectPassthroughSeekParams(params, r.seekTime, realStart, trimAudio)
+		} else if r.isVideoCopy() {
+			params = injectSeekParams(params, r.seekTime, true)
 		} else {
-			params = injectSeekParams(params, r.seekTime, r.isVideoCopy())
+			params = injectSeekParams(params, r.seekTime, false)
+			// The accurate seek trims only what is decoded: the outputs
+			// that are not are cut at the seek point on the output side.
+			params = cutAtOutputStart(params, r.h.reencodeSeekCuts(r.fallbacks))
 		}
 		// Remove -xerror when seeking: AVI and other containers may produce
 		// non-fatal errors during seek that -xerror would treat as fatal.
@@ -719,8 +724,11 @@ func removeParam(params []string, flag string) []string {
 // (re-encode) start from the same keyframe → A/V sync.
 //
 // For re-encode mode: just -ss (accurate seek). FFmpeg decodes from the nearest
-// keyframe and discards frames before the target, then starts encoding.
-// Both streams start from the exact position → perfect sync.
+// keyframe and discards what comes before the target -- but only for the
+// streams it decodes: the trim is a filter at the input of the stream's
+// filter graph (fftools/ffmpeg_filter.c insert_trim). A copied stream has no
+// graph and starts at the keyframe the demuxer landed on, up to a GOP
+// earlier; the run cuts those outputs itself (cutAtOutputStart).
 //
 // Input-level -ss is always used because output-level -ss (after -i) causes
 // video segments to appear much later than audio when re-encoding.
@@ -739,4 +747,58 @@ func injectSeekParams(params []string, seekSec float64, videoCopy bool) []string
 	}
 
 	return result
+}
+
+// cutAtOutputStart puts -ss 0 before the -map of every output whose map is
+// in maps: an output start time of 0, counted like every timestamp of the
+// run from the input seek point, so that output drops what the demuxer
+// hands it from before that point -- a copied packet whose DTS is below it
+// (fftools/ffmpeg_mux.c of_streamcopy), a subtitle whose start is
+// (ffmpeg_enc.c do_subtitle_out). The same placement as the passthrough
+// route's audio cut (injectPassthroughSeekParams).
+func cutAtOutputStart(params []string, maps []string) []string {
+	if len(maps) == 0 {
+		return params
+	}
+	cut := make(map[string]bool, len(maps))
+	for _, m := range maps {
+		cut[m] = true
+	}
+	result := make([]string, 0, len(params)+2*len(maps))
+	for i, p := range params {
+		if p == "-map" && i+1 < len(params) && cut[params[i+1]] {
+			result = append(result, "-ss", "0")
+		}
+		result = append(result, p)
+	}
+	return result
+}
+
+// reencodeSeekCuts are the -map values of the outputs a seek run of a
+// re-encoded video cuts at the seek point (cutAtOutputStart), with the
+// run's current options: every audio track that is copied.
+//
+// The input seek lands on the keyframe at or before the seek point (for an
+// MKV with B-frames at or before the seek point minus 3/23 s,
+// fftools/ffmpeg_demux.c dts_heuristic), and everything from there on is
+// counted from the seek point, so what comes before it is negative. The
+// re-encoded video is trimmed to the seek point; a copied AAC track is not,
+// and its output -- a segment muxer of its own, which cannot take negative
+// timestamps -- shifts its first packet to zero (libavformat/mux.c,
+// avoid_negative_ts make_non_negative). Measured on FFmpeg 8.1.2, a seek to
+// 35 (run at 30) on a 10 s GOP MKV: the copied audio started at movie
+// 19.755, the video at 30.000, and hls.js, which places both by their PTS,
+// played the sound 10.16 s late for the whole run, the audio playlist
+// 10 s longer than the video's. With the cut: -83 ms, against -62 ms from
+// the start. An encoded track goes through the trim like the video
+// (EncodeAudio makes every track one) and is left alone. An audio-only
+// source has no h.audio (its track is the primary) and so no cut.
+func (h *HLS) reencodeSeekCuts(opts ParamOptions) []string {
+	var maps []string
+	for _, a := range h.audio {
+		if c := a.codecParams(opts); c[len(c)-1] == "copy" {
+			maps = append(maps, fmt.Sprintf("0:%d", a.s.GetIndex()))
+		}
+	}
+	return maps
 }

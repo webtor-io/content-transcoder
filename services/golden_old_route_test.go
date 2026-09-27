@@ -10,6 +10,14 @@ package services
 //
 // This file uses only what 1b25e28 has, so it can be copied onto it to
 // regenerate the record.
+//
+// Deliberate departures from 1b25e28, spliced into the record by hand
+// (only these seek_args entries; every other byte is still 1b25e28's).
+// A record regenerated on 1b25e28 has to get them again:
+//   - a seek run of a re-encoded video cuts each copied audio track at the
+//     seek point: "-ss", "0" before its "-map" (hevc-1080-main10-aac,
+//     hevc-2560x1080, hevc-cover-art-first: 0:1 or 0:2, their only track;
+//     hevc-800-ac3-dvdsub: 0:2, the AAC one, not the encoded AC3).
 
 import (
 	"context"

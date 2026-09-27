@@ -93,7 +93,7 @@ Depends on codec mode:
 | Mode | `-ss` position | Flags | Rationale |
 |------|---------------|-------|-----------|
 | **Copy** (h264 source) | Before `-i` | `-ss T -noaccurate_seek -i URL` | Fast input-level seek; `-noaccurate_seek` starts both video and audio from same keyframe for A/V sync |
-| **Re-encode** (mpeg4, vp9, etc.) | Before `-i` | `-ss T -i URL` | Input seek to the keyframe before T, then accurate decode up to T; `-xerror` is dropped on seeks |
+| **Re-encode** (mpeg4, vp9, etc.) | Before `-i`; `-ss 0` on each copied audio output | `-ss T -i URL ... -ss 0 -map 0:<copied audio> ...` | Input seek to the keyframe before T, then accurate decode up to T; the accurate seek trims only decoded streams, so copied audio is cut at T on its output (A/V). `-xerror` is dropped on seeks |
 | **Passthrough** (HEVC → fMP4) | Before `-i`; `-ss 0` on each audio output | `-ss T -noaccurate_seek -itsoffset T-R -i URL ... -ss 0 -map 0:<audio> ...` | The copy seek; R is where FFmpeg's own seek lands (probed with FFmpeg, not ffprobe), every output counts from it, subtitles included, and the audio before it is dropped (A/V). No R: no offset, no cut, and nothing remembered for the key |
 
 ### Output Directory Structure

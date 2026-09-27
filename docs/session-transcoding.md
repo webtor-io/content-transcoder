@@ -327,11 +327,20 @@ ffmpeg -ss {time} -noaccurate_seek -i {url} ... -c:v copy ...
 ### Re-encode Mode (mpeg4, vp9, etc. → `-c:v h264`)
 
 ```
-ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ...
+ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ... -ss 0 -map 0:{copied audio} ... -c:a copy ...
 ```
 
 - `-ss` before `-i` here too (`injectSeekParams` places it there in both modes). FFmpeg seeks the input to the keyframe before `{time}` using the container index, then decodes and discards frames up to `{time}` (accurate seek is the default).
-- Perfect A/V sync: both streams are decoded and start from the exact position.
+- **The accurate seek trims only decoded streams.** The trim is a filter at the input of a stream's filter graph (`fftools/ffmpeg_filter.c`, `insert_trim`). The video and every encoded audio track start exactly at `{time}`. A copied AAC track has no graph: it starts at the keyframe the demuxer landed on, up to a GOP earlier (for an MKV with B-frames, at or before `{time}` − 3/23 s, `ffmpeg_demux.c` `dts_heuristic`). Its output is a segment muxer of its own, which shifts its first negative timestamp to zero (`libavformat/mux.c`, `avoid_negative_ts`), so audio and video no longer share a clock.
+- **`-ss 0` on each copied audio output** (`cutAtOutputStart`, `HLS.reencodeSeekCuts`). An output start time of 0 drops the copied packets whose DTS is before `{time}` (`ffmpeg_mux.c`, `of_streamcopy`). Measured on FFmpeg 8.1.2, a seek to 35 (run at 30) on a 10 s GOP MKV, copied AAC:
+
+  | | A/V (positive: audio late) | Audio playlist (video 40.08 s) |
+  |---|---|---|
+  | From the start | −62 ms | — |
+  | After the seek, without the cut | +10 162 ms | 50.26 s |
+  | After the seek, with the cut | −83 ms | 40.01 s |
+
+  hls.js places the audio by its PTS against the video's, so without the cut the sound played 10 s late for the whole run, and the media ended 10 s after the picture. Encoded tracks (AC3, 5.1 AAC, `EncodeAudio`) are left alone: the trim already cuts them.
 - On any seek (`{time}` > 0), `-xerror` is removed. AVI and other containers report non-fatal errors after a seek, and `-xerror` would turn them into a failed run.
 - From the start (`{time}` = 0) `-xerror` stays. Without it, a failed read of the source ends FFmpeg like the end of the file: exit 0, a completed run, and it is never restarted.
 - Per-source fallbacks (`ParamOptions`, remembered by the RunManager per source). When a run dies on a failure a known option cures, that source's later runs get the option:

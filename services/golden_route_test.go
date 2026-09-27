@@ -42,7 +42,8 @@ func noSourceProbe(t *testing.T) {
 // playlists, the seek answer, every refusal and its body -- whenever the
 // session cannot pass through: passthrough not configured (the default),
 // configured but the client declaring nothing, something unparsable, or
-// "unknown". The record was taken on 1b25e28 (golden_old_route_test.go).
+// "unknown". The record was taken on 1b25e28 (golden_old_route_test.go),
+// with the deliberate departures listed there.
 func TestGolden_OldRouteUnchanged(t *testing.T) {
 	b, err := os.ReadFile(goldenRecordPath)
 	if err != nil {
