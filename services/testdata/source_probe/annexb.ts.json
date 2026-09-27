@@ -1,6 +1,7 @@
 {
-    "packets": [
+    "packets_and_frames": [
         {
+            "type": "packet",
             "codec_type": "video",
             "stream_index": 0,
             "pts": 133200,
@@ -21,6 +22,7 @@
             ]
         },
         {
+            "type": "packet",
             "codec_type": "video",
             "stream_index": 0,
             "pts": 147600,
@@ -37,6 +39,40 @@
                 {
                     "side_data_type": "MPEGTS Stream ID",
                     "id": 224
+                }
+            ]
+        },
+        {
+            "type": "frame",
+            "media_type": "video",
+            "stream_index": 0,
+            "key_frame": 1,
+            "pts": 133200,
+            "pts_time": "1.480000",
+            "best_effort_timestamp": 133200,
+            "best_effort_timestamp_time": "1.480000",
+            "duration": 3600,
+            "duration_time": "0.040000",
+            "pkt_pos": "564",
+            "pkt_size": "4237",
+            "width": 128,
+            "height": 72,
+            "crop_top": 0,
+            "crop_bottom": 0,
+            "crop_left": 0,
+            "crop_right": 0,
+            "pix_fmt": "yuv420p",
+            "sample_aspect_ratio": "1:1",
+            "pict_type": "I",
+            "interlaced_frame": 0,
+            "top_field_first": 0,
+            "lossless": 0,
+            "repeat_pict": 0,
+            "color_range": "tv",
+            "chroma_location": "left",
+            "side_data_list": [
+                {
+                    "side_data_type": "H.26[45] User Data Unregistered SEI message"
                 }
             ]
         }
@@ -61,6 +97,7 @@
             "level": 30,
             "color_range": "tv",
             "chroma_location": "left",
+            "refs": 1,
             "view_ids_available": "",
             "view_pos_available": "",
             "ts_id": "1",
@@ -73,6 +110,7 @@
             "start_time": "1.480000",
             "duration_ts": 180000,
             "duration": "2.000000",
+            "nb_read_frames": "1",
             "nb_read_packets": "2",
             "extradata": "\nAAABQAEMAf//AWAAAAMAkAAAAwAAAwAelZQJAAAAAUIBAQFgAAADAJAAAAMAAAMAHqAQIFHy5ZWVKTC8\nBaAgAAADACAAAAMDIQAAAAFEAcBzwIk=\n",
             "extradata_size": 83,

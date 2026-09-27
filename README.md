@@ -44,6 +44,23 @@ GLOBAL OPTIONS:
    --version, -v                             print the version
 ```
 
+## HEVC passthrough
+
+A player that says what it decodes (`POST /session?...&decode=hevc10,hevc10-2160,hdr-pq`)
+can get the source's HEVC as it is, in HLS fMP4, instead of the H.264 route
+(see [docs/session-transcoding.md](docs/session-transcoding.md)). The transcoder
+decides, and only for the codecs its capability lists:
+
+```
+--passthrough-video-codecs value       source video codecs handed to players as they are: hevc; empty (the default) passes none [$PASSTHROUGH_VIDEO_CODECS]
+--passthrough-video-codecs-file value  file with the same list, re-read on every new session when it changes; overrides the flag [$PASSTHROUGH_VIDEO_CODECS_FILE]
+```
+
+With the capability empty, or a client that declares nothing, every session
+takes the route it always had. `PASSTHROUGH_VIDEO_CODECS=hevc` works with
+`DISABLE_VIDEO_TRANSCODING=true` too: passthrough copies the video, so the
+sources a player can decode as they are play there as well.
+
 ## Example
 ```
 cd server &&

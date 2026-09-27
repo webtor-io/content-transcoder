@@ -1,33 +1,102 @@
 package services
 
 import (
+	"encoding/binary"
 	"errors"
 	"strings"
 	"testing"
 )
 
 // testHVCC is a minimal hvcC record (ISO/IEC 14496-15): the fixed 23-byte
-// head plus one empty parameter-set array, profile_space 0, compatibility
-// flag of the profile set, 4-byte NAL lengths.
+// head, then a VPS, an SPS and a PPS whose profile_tier_level says the same
+// as the head -- profile_space 0, the compatibility flag of the profile set,
+// progressive and frame-only, 4-byte NAL lengths.
 func testHVCC(profileIdc int, tierHigh bool, level int) []byte {
-	b := make([]byte, 23, 28)
+	ptl := testPTL(profileIdc, tierHigh, level)
+	return testHVCCWith(ptl, testVPS(ptl), testSPS(ptl), testPPS())
+}
+
+// testPTL is the general profile_tier_level of testHVCC.
+func testPTL(profileIdc int, tierHigh bool, level int) hevcPTL {
+	return hevcPTL{profile: profileIdc, tier: tierHigh, compat: 0x80000000 >> uint(profileIdc), constraint: 0x90 << 40, level: level}
+}
+
+// testHVCCWith is an hvcC whose head says head and whose arrays hold nals
+// (one array per NAL unit, in order).
+func testHVCCWith(head hevcPTL, nals ...[]byte) []byte {
+	b := make([]byte, 23)
 	b[0] = 1
-	b[1] = byte(profileIdc & 0x1f)
-	if tierHigh {
+	b[1] = byte(head.space<<6) | byte(head.profile&0x1f)
+	if head.tier {
 		b[1] |= 0x20
 	}
-	b[2] = 0x80 >> uint(profileIdc) // general_profile_compatibility_flag[profileIdc]
-	b[6] = 0x90                     // progressive_source, frame_only
-	b[12] = byte(level)
+	binary.BigEndian.PutUint32(b[2:], head.compat)
+	for i := 0; i < 6; i++ {
+		b[6+i] = byte(head.constraint >> (40 - 8*i))
+	}
+	b[12] = byte(head.level)
 	b[13], b[14] = 0xf0, 0x00
 	b[15] = 0xfc
 	b[16] = 0xfd // chroma 4:2:0
 	b[17] = 0xf8
 	b[18] = 0xf8
-	b[21] = 0x0f                       // lengthSizeMinusOne 3
-	b[22] = 1                          // numOfArrays
-	return append(b, 0xa0, 0x00, 0x00) // VPS array, no NAL units
+	b[21] = 0x0f // lengthSizeMinusOne 3
+	b[22] = byte(len(nals))
+	for _, n := range nals {
+		b = append(b, 0x80|(n[0]>>1)&0x3f, 0, 1, byte(len(n)>>8), byte(len(n)))
+		b = append(b, n...)
+	}
+	return b
 }
+
+// ptlBits is a general profile_tier_level, 96 bits.
+func ptlBits(p hevcPTL) []byte {
+	b := make([]byte, 12)
+	b[0] = byte(p.space<<6) | byte(p.profile&0x1f)
+	if p.tier {
+		b[0] |= 0x20
+	}
+	binary.BigEndian.PutUint32(b[1:], p.compat)
+	for i := 0; i < 6; i++ {
+		b[5+i] = byte(p.constraint >> (40 - 8*i))
+	}
+	b[11] = byte(p.level)
+	return b
+}
+
+// withEmulationPrevention is a NAL unit from its header and RBSP: a 03 put
+// in after every 00 00 that a byte of 0..3 follows (H.265 7.4.2).
+func withEmulationPrevention(header, rbsp []byte) []byte {
+	out := append([]byte{}, header...)
+	zeros := 0
+	for _, c := range rbsp {
+		if zeros >= 2 && c <= 3 {
+			out = append(out, 3)
+			zeros = 0
+		}
+		out = append(out, c)
+		if c == 0 {
+			zeros++
+		} else {
+			zeros = 0
+		}
+	}
+	return out
+}
+
+// testVPS, testSPS and testPPS are base-layer parameter sets, with ptl in
+// the VPS and SPS and as much of the rest as the parsers read: vps_id,
+// base-layer flags, one layer and sub-layer, nesting, the reserved 16 bits;
+// sps: vps_id, one sub-layer, nesting.
+func testVPS(ptl hevcPTL) []byte {
+	return withEmulationPrevention([]byte{nalVPS << 1, 1}, append(append([]byte{0x0c, 0x01, 0xff, 0xff}, ptlBits(ptl)...), 0x80))
+}
+
+func testSPS(ptl hevcPTL) []byte {
+	return withEmulationPrevention([]byte{nalSPS << 1, 1}, append(append([]byte{0x01}, ptlBits(ptl)...), 0xa0, 0x80))
+}
+
+func testPPS() []byte { return []byte{nalPPS << 1, 1, 0xc1, 0x72, 0xb4, 0x62, 0x40} }
 
 // sdrMain10 is the facts of an ordinary 1080p Main10 SDR MKV.
 func sdrMain10() sourceHEVCFacts {

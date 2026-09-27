@@ -123,17 +123,33 @@ func TestPassthroughSegmentNamesMatchTheCommand(t *testing.T) {
 }
 
 // The seek of a passthrough run: the copy route's input seek at the
-// quantized time, and every output's zero moved to the keyframe it lands on.
+// quantized time, every output's zero moved to the keyframe it lands on,
+// and the audio outputs cut at that zero.
 func TestInjectPassthroughSeekParams(t *testing.T) {
-	in := []string{"-reconnect", "1", "-i", "http://src", "-xerror"}
-	got := strings.Join(injectPassthroughSeekParams(in, 30, 20.02), " ")
-	if want := "-reconnect 1 -seek_timestamp 1 -ss 30.000 -noaccurate_seek -itsoffset 9.980000 -i http://src -xerror"; got != want {
+	in := []string{"-reconnect", "1", "-i", "http://src", "-xerror", "-map", "0:0", "-c:v", "copy", "v.m3u8",
+		"-map", "0:1", "-c:a", "copy", "a0.m3u8", "-map", "0:2", "-c:a", "libfdk_aac", "a1.m3u8", "-map", "0:3", "-f", "segment", "s0.vtt"}
+	got := strings.Join(injectPassthroughSeekParams(in, 30, 20.02, []string{"0:1", "0:2"}), " ")
+	want := "-reconnect 1 -ss 30.000 -noaccurate_seek -itsoffset 9.980000 -i http://src -xerror -map 0:0 -c:v copy v.m3u8 " +
+		"-ss 0 -map 0:1 -c:a copy a0.m3u8 -ss 0 -map 0:2 -c:a libfdk_aac a1.m3u8 -map 0:3 -f segment s0.vtt"
+	if got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
-	// No real start (the probe failed): the quantized seek is the zero.
-	got = strings.Join(injectPassthroughSeekParams(in, 30, 30), " ")
-	if want := "-reconnect 1 -seek_timestamp 1 -ss 30.000 -noaccurate_seek -i http://src -xerror"; got != want {
+	// No real start (the probe failed): the quantized seek is the zero, and
+	// the audio is left whole -- the video starts at the keyframe before it.
+	got = strings.Join(injectPassthroughSeekParams(in, 30, 30, nil), " ")
+	want = "-reconnect 1 -ss 30.000 -noaccurate_seek -i http://src -xerror -map 0:0 -c:v copy v.m3u8 " +
+		"-map 0:1 -c:a copy a0.m3u8 -map 0:2 -c:a libfdk_aac a1.m3u8 -map 0:3 -f segment s0.vtt"
+	if got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	// Counted from the file's start time, as every other run: no
+	// -seek_timestamp.
+	if strings.Contains(strings.Join(passthroughSeekInput(30), " "), "seek_timestamp") {
+		t.Error("absolute seek")
+	}
+	// The audio outputs of a session are its audio streams' maps.
+	if got := passthroughSource(t, 0).passthroughAudioMaps(); strings.Join(got, " ") != "0:1 0:2" {
+		t.Errorf("audio maps %v", got)
 	}
 }
 
@@ -164,8 +180,11 @@ func TestPassthroughRunStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Join(r.cmd.Args[1:], " ")
-	if !strings.Contains(args, "-seek_timestamp 1 -ss 30.000 -noaccurate_seek -itsoffset 9.980000 -i http://src/movie.mkv ") {
+	if !strings.Contains(args, " -ss 30.000 -noaccurate_seek -itsoffset 9.980000 -i http://src/movie.mkv ") || strings.Contains(args, "seek_timestamp") {
 		t.Errorf("seek: %s", args)
+	}
+	if !strings.Contains(args, " -ss 0 -map 0:1 -c:a copy -f hls ") || strings.Count(args, "-ss 0 ") != 1 {
+		t.Errorf("the audio output is cut at the real start, and only it: %s", args)
 	}
 	if strings.Contains(args, "-xerror") {
 		t.Errorf("-xerror on a seek: %s", args)
@@ -185,6 +204,86 @@ func TestPassthroughRunStart(t *testing.T) {
 	args2 := strings.Join(r.cmd.Args[1:], " ")
 	if gen2 == gen1 || !strings.Contains(args2, "v0-2160-init-"+gen2+".mp4") || strings.Contains(args2, gen1) {
 		t.Errorf("restart: generation %s -> %s, args %s", gen1, gen2, args2)
+	}
+}
+
+// A passthrough seek run whose real start could not be found runs from the
+// quantized seek, with no offset and the audio whole, and keeps nothing:
+// the next run of the key probes again and, answered, gets the offset and
+// the cut audio -- a probe timing out on a cold source once is not that
+// key's offset for the rest of the pod's life. Every probe is counted by
+// result. The copy route keeps its fallback, as in 1b25e28.
+func TestPassthroughRealStart_FailureIsNotKept(t *testing.T) {
+	fakeFFmpeg(t)
+	orig, origPT := probeRunStart, probePassthroughStart
+	t.Cleanup(func() { probeRunStart, probePassthroughStart = orig, origPT })
+	fail := func(context.Context, string, string, float64) (float64, error) { return 0, os.ErrDeadlineExceeded }
+	answer := func(_ context.Context, _ string, _ string, seek float64) (float64, error) { return seek - 9.98, nil }
+	count := func(mode, result string) float64 {
+		return testutil.ToFloat64(metricRunRealStartTotal.WithLabelValues(mode, result))
+	}
+	failed0, ok0 := count(runModePassthrough, realStartFailed), count(runModePassthrough, realStartOK)
+
+	h := hevcHLS(t, 3840, 2160, true, nil)
+	dir := t.TempDir()
+	key := runKeyFor(dir, h, 30)
+	m := NewRunManager()
+	defer m.CloseAll()
+
+	probePassthroughStart = fail
+	r1, err := m.Acquire(dir, 30, "http://src/movie.mkv", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(r1.cmd.Args[1:], " ")
+	if !strings.Contains(args, " -ss 30.000 -noaccurate_seek -i ") || strings.Contains(args, "-itsoffset") || strings.Contains(args, "-ss 0 ") {
+		t.Errorf("unresolved seek: %s", args)
+	}
+	if r1.RealStart() != 30 {
+		t.Errorf("unresolved real start %v", r1.RealStart())
+	}
+	if _, ok := m.ResolvedStart(key); ok {
+		t.Error("a failed resolution was kept for the key")
+	}
+	if d := count(runModePassthrough, realStartFailed) - failed0; d != 1 {
+		t.Errorf("failed counted %v", d)
+	}
+
+	// The run object goes (reaped); the next one asks again.
+	m.Release(r1)
+	r1.Cleanup()
+	m.mu.Lock()
+	delete(m.runs, key)
+	m.mu.Unlock()
+	probePassthroughStart = answer
+	r2, err := m.Acquire(dir, 30, "http://src/movie.mkv", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args = strings.Join(r2.cmd.Args[1:], " ")
+	if !strings.Contains(args, " -itsoffset 9.980000 -i ") || !strings.Contains(args, " -ss 0 -map 0:1 ") {
+		t.Errorf("resolved seek: %s", args)
+	}
+	if v, ok := m.ResolvedStart(key); !ok || math.Abs(v-20.02) > 1e-9 {
+		t.Errorf("the answer is kept: %v %v", v, ok)
+	}
+	if d := count(runModePassthrough, realStartOK) - ok0; d != 1 {
+		t.Errorf("ok counted %v", d)
+	}
+
+	// The copy route: a fallback is kept, as it always was.
+	copyFailed0 := count(runModeCopy, realStartFailed)
+	probeRunStart = fail
+	copyHLS := &HLS{primary: []*HLSStream{NewHLSStream(0, Video, &cp.Stream{CodecName: "h264"}, nil, nil, false)}}
+	m.mu.Lock()
+	rc := m.newRunLocked(runKey(dir, 60), dir, 60, "http://src/movie.mkv", copyHLS)
+	m.mu.Unlock()
+	rc.resolveRealStartOnce()
+	if v, ok := m.ResolvedStart(runKey(dir, 60)); !ok || v != 60 {
+		t.Errorf("the copy route's fallback: %v %v", v, ok)
+	}
+	if d := count(runModeCopy, realStartFailed) - copyFailed0; d != 1 {
+		t.Errorf("copy failed counted %v", d)
 	}
 }
 
@@ -500,23 +599,26 @@ func TestParseFrameCRCStart(t *testing.T) {
 	}
 }
 
-// The probe runs the run's own seek, with -copyts so the timestamps it
-// prints are the file's.
+// The probe runs the run's own seek, and its timestamps come relative to
+// the seek point, as the run's do: the real start is the seek plus the
+// first packet's.
 func TestFFmpegSeekStartArgs(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
-	script := "#!/bin/sh\necho \"$@\" > " + argsFile + "\nprintf '#tb 0: 1/1000\\n0,      19937,      20020,       41,     8075, 0x71caa088\\n'\n"
+	// FFmpeg 8.1.2's answer for a seek to 30 on an MKV whose keyframe is
+	// at 20.020 (DTS guessed 19.937).
+	script := "#!/bin/sh\necho \"$@\" > " + argsFile + "\nprintf '#tb 0: 1/1000\\n0,     -10063,     -9980,       41,     8075, 0x71caa088\\n'\n"
 	if err := os.WriteFile(filepath.Join(dir, "ffmpeg"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	got, err := ffmpegSeekStart(context.Background(), "http://src/movie.mkv?api-key=K", "3", 30)
-	if err != nil || got != 19.937 {
+	if err != nil || math.Abs(got-19.937) > 1e-9 {
 		t.Fatalf("%v %v", got, err)
 	}
 	b, _ := os.ReadFile(argsFile)
 	want := "-nostdin -v error -protocol_whitelist http,https,tcp,tls " + strings.Join(passthroughSeekInput(30), " ") +
-		" -copyts -i http://src/movie.mkv?api-key=K -map 0:3 -c copy -frames:v 1 -f framecrc -"
+		" -i http://src/movie.mkv?api-key=K -map 0:3 -c copy -frames:v 1 -f framecrc -"
 	if strings.TrimSpace(string(b)) != want {
 		t.Errorf("args\n got %s\nwant %s", b, want)
 	}
@@ -524,7 +626,7 @@ func TestFFmpegSeekStartArgs(t *testing.T) {
 		t.Error("a source that parses as an option was run")
 	}
 	// The run seeks with the same options.
-	run := strings.Join(injectPassthroughSeekParams([]string{"-i", "u"}, 30, 19.937), " ")
+	run := strings.Join(injectPassthroughSeekParams([]string{"-i", "u"}, 30, 19.937, nil), " ")
 	if !strings.HasPrefix(run, strings.Join(passthroughSeekInput(30), " ")+" -itsoffset 10.063000 -i") {
 		t.Errorf("run seek %s", run)
 	}

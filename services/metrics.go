@@ -89,6 +89,15 @@ const (
 	probeOutcomeError = "error"
 )
 
+// Results of resolving a copy or passthrough seek run's real start
+// (TranscodeRun.resolveRealStart): the probe answered, failed (error or
+// timeout), or named a keyframe that cannot be right.
+const (
+	realStartOK          = "ok"
+	realStartFailed      = "failed"
+	realStartImplausible = "implausible"
+)
+
 // Outcomes of the transcoder's own look at an HEVC source (sourceProber).
 const (
 	sourceProbeOK     = "ok"
@@ -213,7 +222,7 @@ var (
 	metricVideoRouteTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricsNamespace,
 		Name:      "video_route_total",
-		Help:      "POST /session answers by the video route (passthrough, copy, reencode, audio; refused for a 415 or the 503 of a failed source check, error for other failures) and the reason it was chosen.",
+		Help:      "POST /session answers by the video route (passthrough, copy, reencode, audio; refused for the 415 of a video the route would have to encode or the 503 of a failed source check, error for any other failure) and the reason it was chosen.",
 	}, []string{"route", "reason"})
 	metricSourceProbeSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: metricsNamespace,
@@ -224,8 +233,13 @@ var (
 	metricPassthroughCodecsMismatch = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricsNamespace,
 		Name:      "passthrough_codecs_mismatch_total",
-		Help:      "Passthrough master playlists whose output HEVC configuration (the init's hvcC, which CODECS is built from) differs from the source's the route was decided on, by field (profile, tier, level); unbuildable when the init gave no CODECS at all and the master was refused. Expected 0.",
+		Help:      "Passthrough master playlists whose output HEVC configuration (the init's hvcC, which CODECS is built from) differs from what the route was decided on (the source's parameter sets merged as FFmpeg's hvcC writer merges them), by field (profile, tier, level); unbuildable when the init gave no CODECS at all and the master was refused. Expected 0.",
 	}, []string{"field"})
+	metricRunRealStartTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsNamespace,
+		Name:      "run_real_start_total",
+		Help:      "Probes of where a seek run of a copied video (copy, passthrough) really starts, by run mode and result (ok; failed: error or timeout; implausible: a keyframe after the seek or over 60 s before it). Not ok: the run reports the quantized seek, its timeline and subtitles off by up to a GOP.",
+	}, []string{"mode", "result"})
 	metricSessionSegmentsServed = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: metricsNamespace,
 		Name:      "session_segments_served",
@@ -268,6 +282,11 @@ func init() {
 	}
 	for _, r := range []string{sourceProbeOK, sourceProbeFailed} {
 		metricSourceProbeSeconds.WithLabelValues(r)
+	}
+	for _, m := range []string{runModeCopy, runModePassthrough} {
+		for _, r := range []string{realStartOK, realStartFailed, realStartImplausible} {
+			metricRunRealStartTotal.WithLabelValues(m, r)
+		}
 	}
 	for _, r := range []string{videoRoutePassthrough, videoRouteCopy, videoRouteReencode, videoRouteAudio} {
 		metricSessionSegmentsServed.WithLabelValues(r)

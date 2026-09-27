@@ -215,13 +215,16 @@ type sessionCreateResponse struct {
 	// VideoRoute is what the session does with the video: passthrough,
 	// copy, reencode, or audio for a source without one.
 	VideoRoute string `json:"video_route"`
-	// RouteReason is why (the reason* constants in route.go).
+	// RouteReason is why, one of a closed set (services/route.go): ok for
+	// passthrough; no_declaration, passthrough_off, not_hevc, needs_2160,
+	// needs_pq and the like for the old route.
 	RouteReason string `json:"route_reason"`
 }
 
-// Answers of POST /session that are about the route. A refusal (415, and
-// the 503 below) names its reason in this header: the body of the 415 stays
-// what it was, clients match on it.
+// Answers of POST /session that are about the route. A refusal the route
+// causes (the 415 of a video the old route will not encode, and the 503
+// below) names its reason in this header: the body of the 415 stays what it
+// was, clients match on it. Other refusals (nothing playable) have none.
 const (
 	routeReasonHeader = "X-Video-Route-Reason"
 	// errSourceCheckFailed is the 503 body when the source could not be
@@ -261,15 +264,18 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 	sess, route, code, msg := s.openSessionWith(sourceURL, true, decl)
 	if sess == nil {
 		if route.reason != "" {
-			label := videoRouteRefused
-			if code != http.StatusUnsupportedMediaType && code != http.StatusServiceUnavailable {
-				label = videoRouteError
+			label := videoRouteError
+			// The reason is named only where it is the cause: a client
+			// picking its text from the header must not explain a file
+			// with nothing playable by the route.
+			if route.refused {
+				label = videoRouteRefused
+				w.Header().Set(routeReasonHeader, route.reason)
+				if code == http.StatusServiceUnavailable {
+					w.Header().Set("Retry-After", sourceCheckRetryAfter)
+				}
 			}
 			metricVideoRouteTotal.WithLabelValues(label, route.reason).Inc()
-			w.Header().Set(routeReasonHeader, route.reason)
-			if code == http.StatusServiceUnavailable {
-				w.Header().Set("Retry-After", sourceCheckRetryAfter)
-			}
 		}
 		http.Error(w, msg, code)
 		return
@@ -396,9 +402,10 @@ func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclarati
 		s.sessionManager.Close(sess.id)
 		log.WithError(err).Error("session: failed to start ffmpeg")
 		if reason := unsupportedContentReason(err); reason != "" {
+			route.refused = refusesVideo(err)
 			// The old route refuses the video, and the look that could have
 			// put the session on passthrough did not answer: retryable.
-			if route.reason == reasonProbeFailed && refusesVideo(err) {
+			if route.reason == reasonProbeFailed && route.refused {
 				return nil, route, http.StatusServiceUnavailable, errSourceCheckFailed
 			}
 			return nil, route, http.StatusUnsupportedMediaType, reason
@@ -849,7 +856,7 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 
 // sessionSegmentHandler handles GET /session/{id}/{segment}.ts|.vtt
 // @Summary Get HLS segment
-// @Description Returns a .ts or .vtt segment. Waits for file to appear if FFmpeg hasn't produced it yet. Auto-restarts FFmpeg if it was stopped.
+// @Description Returns a .ts or .vtt segment (a passthrough session: .m4s segments and <stream>-init-<generation>.mp4 init segments, video/mp4). Waits for file to appear if FFmpeg hasn't produced it yet. Auto-restarts FFmpeg if it was stopped.
 // @Tags session
 // @Produce video/mp2t
 // @Param sessionId path string true "Session ID"

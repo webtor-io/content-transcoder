@@ -86,6 +86,11 @@ type passthroughCapabilitySource struct {
 	current passthroughCapability
 	read    os.FileInfo // the file as last read
 	failure string      // the last read failure logged
+	// fileRead: the file has been read once and its value logged. The
+	// start-up line speaks for the flag; without a line of its own, a
+	// file that says the same (the empty ConfigMap of stage 1) was never
+	// seen to be read at all.
+	fileRead bool
 }
 
 func newPassthroughCapabilitySource(flagValue, file string) *passthroughCapabilitySource {
@@ -129,10 +134,10 @@ func (s *passthroughCapabilitySource) Current() passthroughCapability {
 	}
 	s.read, s.failure = fi, ""
 	c, dropped := parsePassthroughCodecs(string(b))
-	if c.String() != s.current.String() || len(dropped) > 0 {
+	if !s.fileRead || c.String() != s.current.String() || len(dropped) > 0 {
 		logPassthroughCapability(c, dropped, s.file)
 	}
-	s.current = c
+	s.current, s.fileRead = c, true
 	return c
 }
 

@@ -21,11 +21,15 @@ Errors: content-level rejections (`ErrResolutionNotSupported`,
 deployment) return **415** with the reason as plain-text body, so upstream
 UIs can show a specific message (web-ui maps the body to a localized error
 via `ClassifyError`). Transient internal failures return a generic **500**
-to avoid leaking internals. A refusal names the route reason in
-`X-Video-Route-Reason`; the body stays what it was. When the transcoder's
-own look at an HEVC source failed and the old route refuses it (over 1080p),
-the answer is **503** `source check failed` with `Retry-After: 5` instead of
-the 415: a check that did not answer is not a source that cannot play.
+to avoid leaking internals. A refusal the route causes — the old route
+will not encode the video (over 1080p, or `DISABLE_VIDEO_TRANSCODING`) —
+names the route reason in `X-Video-Route-Reason`; the body stays what it
+was. A source with nothing playable (`no video or audio stream`) is refused
+whatever the route and has no such header. When the transcoder's own look
+at an HEVC source failed and the old route refuses it (over 1080p), the
+answer is **503** `source check failed` with `Retry-After: 5` and the
+header instead of the 415: a check that did not answer is not a source
+that cannot play.
 
 ### Video Route (HEVC passthrough)
 
@@ -49,24 +53,48 @@ the client only declares what it decodes.
   directory), so passthrough is switched without a restart; sessions already
   open keep their route. An unreadable file keeps the last value. Only codecs
   this build can write count (`passthroughBuildCodecs`); the line
-  `HEVC passthrough: on|off` at start and on every change says what is in
-  effect and what was ignored.
+  `HEVC passthrough: on|off` at start (`source` the flag), at the file's
+  first read (`source` the file, even when it says the same) and on every
+  change says what is in effect and what was ignored.
 - **Decision** (`videoRouteFor`, `services/route.go`), first match wins; the
   checks before the source probe need nothing but content-prober's answer:
   `no_declaration`, `passthrough_off`, `not_hevc`, `declaration_pending`,
   `too_large` (over 3840×2160), `needs_2160` (over 1080 — taller or wider —
   without a 2160 token); then the source probe: `probe_failed`, `dv5`,
   `dv7`, `dv_base`, `dv_unknown` (RPU NAL 62/63 without a record),
-  `pix_fmt`, `interlaced`, `no_hvcc`, `profile` (not Main/Main10),
+  `pix_fmt`, `interlaced`, `no_hvcc` (not an hvcC, or its arrays lack a
+  base-layer VPS, SPS or PPS, or hold a NAL type `hevc_mp4toannexb`
+  refuses), `profile` (not Main/Main10),
   `too_large` (level over 5.1), `needs_main10` / `needs_2160` /
   `needs_main` (depth and level against the tokens; level over 4.1 needs a
   2160 token), `needs_high_tier`, `needs_pq`, `hlg_later`; otherwise `ok`.
   Every reason except `ok` is the old route, unchanged.
 - **Source probe** (`services/source_probe.go`): one ffprobe of the video
   stream over the source URL (`-probesize 5000000`, stream, extradata as
-  hvcC, Dolby Vision record, the first 2 packets with their data), 5 s,
-  one retry. Successes are cached in `{hashDir}/source-video-{index}.json`;
-  failures are not.
+  hvcC, Dolby Vision record, the first 2 packets with their data, and the
+  keyframe among them decoded — `-show_frames -skip_frame nokey`), 5 s,
+  one retry. Successes are cached in `{hashDir}/source-video-{index}.json`
+  (layout version 2); failures are not. No decoded frame is a failed probe.
+  - **Transfer.** ffprobe's stream-level `color_transfer` is the
+    container's whenever it has colour information: an MKV whose Colour
+    element has a matrix and no transfer reports none over a PQ bitstream.
+    The decoded frame's is the bitstream's (VUI, or an
+    alternative-transfer SEI). The route reads the stronger of the two
+    (`sourceHEVCFacts.transfer`): HLG over PQ over anything else — PQ in
+    either needs `hdr-pq` and is labelled `VIDEO-RANGE=PQ`, HLG in either
+    is `hlg_later`. The decode costs 8–26 ms on the e2e sources and 0.6 s
+    on a 7.3 MB 4K 10-bit keyframe (2 CPUs), once per source and node.
+  - **Profile, tier, level** are read as the output will carry them
+    (`outputHVCC`): `hevc_mp4toannexb` turns the record's arrays into
+    Annex B and movenc writes a new hvcC from them
+    (`ff_isom_write_hvcc`): from its defaults it merges the
+    profile_tier_level of every base-layer VPS and SPS (the higher tier and
+    its level, the higher profile, flags all sets have) and never reads the
+    source record's head. A head that disagrees with the SPS therefore does
+    not decide: measured on 8.1.2, heads patched to L153 over an SPS at L30
+    and to L30 over H153 came out `hvc1.1.6.L30.90` and `hvc1.1.6.H153.90`,
+    as `outputHVCC` predicts. movenc drops the parameter sets from the
+    samples of an hvc1 track, so a record without all three is `no_hvcc`.
 - **The 415 over 1080p** stands for "the video would have to be encoded":
   the passthrough route is not subject to it (nor to
   `DISABLE_VIDEO_TRANSCODING`); the old route keeps it as it was.
@@ -100,14 +128,18 @@ the client only declares what it decodes.
 - **Master** (`writePassthroughMaster`). Not written at POST /session: the
   first request for `index.m3u8` restarts a stopped run (`EnsureRunning`),
   waits (up to 5 min) until the video init of the run's current process is
-  complete, and writes the master from it: `CODECS` from the init's hvcC
+  complete — a process that ends before its init is restarted once more
+  and waited for, and if that one ends too the answer is 504, logged as
+  `the run ended before its init` — and writes the master from it: `CODECS` from the init's hvcC
   (`hevcCodecString`, ISO/IEC 14496-15 Annex E — `hevc_mp4toannexb`
   rebuilds the record, so not the source's), `mp4a.40.2` when there is
-  audio, `RESOLUTION` from content-prober, `VIDEO-RANGE=PQ` for a
-  `smpte2084` source (else `SDR`), `BANDWIDTH` = the larger of the source's
+  audio, `RESOLUTION` from content-prober, `VIDEO-RANGE=PQ` for a source
+  whose transfer (above) is `smpte2084` (else `SDR`), `BANDWIDTH` = the
+  larger of the source's
   average bit rate and the first video segment's rate plus 192 kb/s of
-  audio. A profile, tier or level that differs from the source's the route
-  was decided on is counted (`passthrough_codecs_mismatch_total{field}`);
+  audio. A profile, tier or level that differs from what the route was
+  decided on (`outputHVCC` of the source) is counted
+  (`passthrough_codecs_mismatch_total{field}`);
   an init no CODECS can be read from is counted as `unbuildable` and the
   master is answered 500 — a guessed CODECS fails in the player at once.
   Written once, atomically; later reads serve it with the session's
@@ -278,7 +310,7 @@ A run is kept from getting too far ahead of its viewers (`services/pacing.go`).
   - `transcoder_runs_paused`: processes frozen right now;
   - `transcoder_run_pause_seconds_total{mode}`: total time processes spent frozen.
 
-**Passthrough runs are paced in media time** (`services/pacing_media.go`). Their video is copied and cut at its keyframes (10 s for a typical x265 GOP) while the audio is cut every 4 s; counted by segment numbers, the audio's numbers would set the demand and the run would freeze at video segment `(t+30)/4 + 75` — 14 min ahead at the start, an hour at t = 30 min. So for them a request for segment n of a stream is a viewer at that segment's start (the EXTINF sum before it in that stream's playlist; a segment not listed yet is a viewer at the stream's edge), production is the EXTINF sum of the primary playlist, and the run freezes at production ≥ demand + lead and continues below demand + lead − 60 s. A resume counts as stalled after 60 s without a new primary segment (provisional), under `mode="passthrough"`. The old route's runs keep the segment pacing above.
+**Passthrough runs are paced in media time** (`services/pacing_media.go`). Their video is copied and cut at its keyframes (10 s for a typical x265 GOP) while the audio is cut every 4 s; counted by segment numbers, the audio's numbers would set the demand and the run would freeze at video segment `(t+30)/4 + 75` — 14 min ahead at the start, an hour at t = 30 min. So for them a request for segment n of a stream is a viewer at that segment's start (the EXTINF sum before it in that stream's playlist; a segment not listed yet is a viewer at the stream's edge), production is the EXTINF sum of the primary playlist, and the run freezes at production ≥ demand + lead and continues below demand + lead − 60 s. A resume counts as stalled after 60 s without a new primary segment (provisional), under `mode="passthrough"`; an alert that sums `run_resume_stalls_total` over every mode counts these too, so it should filter `mode!="passthrough"` until passthrough has a threshold of its own. The old route's runs keep the segment pacing above.
 
 ## FFmpeg Seek Strategy
 
@@ -309,12 +341,15 @@ ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ...
 ### Passthrough Mode (HEVC → fMP4)
 
 ```
-ffmpeg -seek_timestamp 1 -ss {quantized} -noaccurate_seek -itsoffset {quantized - realStart} -i {url} ... -c:v copy ...
+ffmpeg -ss {quantized} -noaccurate_seek -itsoffset {quantized - realStart} -i {url} ... -c:v copy ... -ss 0 -map 0:{audio} ...
 ```
 
-- The input seek is the copy route's, at the quantized time, with `-ss`
-  read as an absolute timestamp (`-seek_timestamp 1`), as the start probe
-  reads it.
+- The input seek is the copy route's, at the quantized time, counted from
+  the file's start time like every other run's: the seek run and the run
+  from 0 share one timeline whatever the file's `start_time` (a source
+  remuxed with start_time 5: a seek to 30 lands on the keyframe at movie
+  20.000, offset 19.917 — with `-seek_timestamp 1`, which the first
+  version had, the offset read 24.917).
 - **Not `-ss {realStart}`.** FFmpeg's input seek goes back to the keyframe
   at or before the target. For a format without `AVFMT_SEEK_TO_PTS`
   (matroska) that has B-frames, it first takes 3/23 s off the target
@@ -323,14 +358,16 @@ ffmpeg -seek_timestamp 1 -ss {quantized} -noaccurate_seek -itsoffset {quantized 
   `-ss 20.020` on an MKV keyframe at 20.020, and `-ss 19.770` on an MP4
   keyframe with that DTS, both started at 10.010.
 - **`realStart`** is resolved with FFmpeg itself (`ffmpegSeekStart`), not
-  ffprobe. It uses the run's seek options plus `-copyts -frames:v 1 -f
-  framecrc`, and reads the earlier of the first packet's DTS and PTS.
-  ffprobe's seek has no dts heuristic, so it names a keyframe the run does
-  not start at whenever one lies in the last 3/23 s before the seek point.
-  Example: a seek to 30 on a 25 fps, 10 s GOP MKV. ffprobe says 30.000,
-  FFmpeg starts at 20.000. ffprobe also has no DTS for matroska, where
-  FFmpeg guesses one: 19.937 for a keyframe at 20.020 with two frames of
-  B-frame delay.
+  ffprobe. It uses the run's seek options plus `-frames:v 1 -f framecrc`,
+  whose timestamps come relative to the seek point as the run's do; the
+  real start is the quantized time plus the earlier of the first packet's
+  DTS and PTS (−10.083 for a seek to 30 over the keyframe at movie 20.000,
+  DTS 19.917, on the source and on its start_time 5 copy alike). ffprobe's
+  seek has no dts heuristic, so it names a keyframe the run does not start
+  at whenever one lies in the last 3/23 s before the seek point. Example: a
+  seek to 30 on a 25 fps, 10 s GOP MKV. ffprobe says 30.000, FFmpeg starts
+  at 20.000. ffprobe also has no DTS for matroska, where FFmpeg guesses
+  one: 19.937 for a keyframe at 20.020 with two frames of B-frame delay.
 - **`-itsoffset`** moves every output's zero from the quantized time to
   `realStart`. The video's first DTS is 0, so its output shifts nothing, and
   subtitles count from the same zero. Measured on 8.1.2, cues at 21 s and
@@ -338,15 +375,39 @@ ffmpeg -seek_timestamp 1 -ss {quantized} -noaccurate_seek -itsoffset {quantized 
   - with the offset: 1.063 and 6.063;
   - without it: 0.000 and 5.000 (each output shifts its own negative
     timestamps away).
-- If the probe does not answer, `realStart` is the quantized time and the
-  offset is 0: the copy route's behaviour.
-- **Audio against video.** movenc writes each fMP4 track's `tfdt` from that
-  track's own first sample (`movenc.c`, `mov_write_tfdt_tag`: `dts -
-  start_dts`) and keeps the track's start only in its edit list. A player
-  that ignores edit lists (hls.js) therefore starts the audio early by
-  (first audio sample − first video DTS). Measured: 83–95 ms on the
-  synthetic x265 sources, the B-frame delay. That is inherent to FFmpeg's
-  fMP4 and not changed here; it belongs to the browser matrix.
+- **`-ss 0` on every audio output** (only with a resolved `realStart`).
+  The demuxer's seek lands the audio a little before the video's keyframe
+  (the first copied AAC packet 162 ms before `realStart` on the e2e A/V
+  source), and each output shifts its own negative timestamps to zero, so
+  the audio played that much late after every seek. An output start time
+  of 0 drops what comes before it: a copied packet whose DTS is below it
+  (`ffmpeg_mux.c`, `of_streamcopy`), encoded samples through a trim
+  (`ffmpeg_filter.c`, `insert_trim`). Measured through the hls muxer, in
+  a player that ignores edit lists (positive: audio late):
+
+  | Audio | From the start | After a seek, before | After a seek, now |
+  |---|---|---|---|
+  | AAC copied | −62 ms | +162 ms | −8 ms |
+  | AC3 encoded (libfdk_aac) | −40 ms | +184 ms | +43 ms |
+
+  From the start the error is the video's B-frame delay (its first PTS is
+  83 ms, hls.js ignores the edit list) against the audio's priming, as on
+  the TS routes. Without a resolved `realStart` the audio is left whole:
+  the video then starts at the keyframe before the zero, and audio cut at
+  the zero would run ahead of it by up to a GOP.
+- **If the probe does not answer** (or names an implausible keyframe),
+  `realStart` is the quantized time, there is no offset and no audio cut:
+  the copy route's behaviour. Unlike the copy route, a passthrough run
+  keeps no such fallback for its key (`RunManager.realStarts`): the next
+  run of the key probes again. Kept, one probe timing out on a cold source
+  fixed that key's offset — up to a GOP off, subtitles with it — for the
+  pod's life. Every probe is counted in
+  `run_real_start_total{mode,result}`.
+- **Audio CODECS.** The master says `mp4a.40.2` for any AAC. hls.js 1.6.14
+  builds its SourceBuffers from the codecs in the init segment
+  (`passthrough-remuxer.ts`, `getParsedTrackCodec`), so a copied HE-AAC
+  track is declared by its own `esds` there; what a native HLS player does
+  with the mismatch is not verified (browser matrix).
 
 ## Player (player/index.html)
 
@@ -416,10 +477,11 @@ the prom port (8083, `--use-prom`, `httpprom` in the chart). Namespace
 | `auto_restarts_total` | Auto-restart attempts charged to a session's budget |
 | `restart_limit_reached_total` | Sessions that hit `maxConsecutiveRestarts` (once per session) |
 | `source_open_seconds{outcome}` | Time to probe a source (its first read); cached probes excluded |
-| `video_route_total{route,reason}` | POST /session answers by route (`passthrough`, `copy`, `reencode`, `audio`; `refused` for a 415 or the 503 of a failed check, `error` otherwise) and reason |
+| `video_route_total{route,reason}` | POST /session answers by route (`passthrough`, `copy`, `reencode`, `audio`; `refused` for the 415 of a video the route would have to encode or the 503 of a failed check, `error` for any other failure — nothing playable among them) and reason |
+| `run_real_start_total{mode,result}` | Probes of where a copy or passthrough seek run really starts: `ok`, `failed` (error, timeout), `implausible` (after the seek, or over 60 s before it). Not `ok`: the run reports the quantized seek |
 | `source_probe_seconds{result}` | The passthrough source probe, retries included, `ok`/`failed`; cached results excluded |
 | `session_segments_served{route}` | Primary segments served to a session, observed when it is removed (sessions that never started a run are not observed) |
-| `passthrough_codecs_mismatch_total{field}` | Passthrough masters whose output hvcC differs from the source's the route was decided on (`profile`, `tier`, `level`), or whose init gave no CODECS (`unbuildable`, master refused). Expected 0 |
+| `passthrough_codecs_mismatch_total{field}` | Passthrough masters whose output hvcC differs from what the route was decided on — the source's parameter sets as `outputHVCC` merges them (`profile`, `tier`, `level`) — or whose init gave no CODECS (`unbuildable`, master refused). Expected 0 |
 
 Run metrics with a `mode` label (`run_first_segment_seconds`, `run_speed`,
 `run_pause_seconds_total`, `run_resume_segment_seconds`,

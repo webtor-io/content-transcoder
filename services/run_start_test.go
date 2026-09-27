@@ -42,21 +42,22 @@ func TestResolveRealStart(t *testing.T) {
 	t.Cleanup(func() { probeRunStart = orig })
 	run := newTranscodeRun("k", t.TempDir(), 600, "http://src", nil)
 
-	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 598.343, nil }
-	if got := run.resolveRealStart(); got != 598.343 {
-		t.Fatalf("keyframe: %v", got)
-	}
-	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 0, errors.New("boom") }
-	if got := run.resolveRealStart(); got != 600 {
-		t.Fatalf("error falls back: %v", got)
-	}
-	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 601, nil }
-	if got := run.resolveRealStart(); got != 600 {
-		t.Fatalf("after the seek point falls back: %v", got)
-	}
-	probeRunStart = func(context.Context, string, string, float64) (float64, error) { return 500, nil }
-	if got := run.resolveRealStart(); got != 600 {
-		t.Fatalf("implausibly early falls back: %v", got)
+	for _, c := range []struct {
+		name   string
+		k      float64
+		err    error
+		want   float64
+		result string
+	}{
+		{"keyframe", 598.343, nil, 598.343, realStartOK},
+		{"error falls back", 0, errors.New("boom"), 600, realStartFailed},
+		{"after the seek point falls back", 601, nil, 600, realStartImplausible},
+		{"implausibly early falls back", 500, nil, 600, realStartImplausible},
+	} {
+		probeRunStart = func(context.Context, string, string, float64) (float64, error) { return c.k, c.err }
+		if got, result := run.resolveRealStart(); got != c.want || result != c.result {
+			t.Errorf("%s: %v %s, want %v %s", c.name, got, result, c.want, c.result)
+		}
 	}
 }
 
@@ -128,7 +129,7 @@ func TestResolveRealStartProbesTheMappedVideo(t *testing.T) {
 		{Index: 1, CodecType: "video", CodecName: "h264", Height: 720},
 	}}, &HLSConfig{sm: Online})
 	run := newTranscodeRun("k", t.TempDir(), 600, "http://src/x.mp4", h)
-	run.resolveRealStart()
+	_, _ = run.resolveRealStart()
 	if got != "1" {
 		t.Fatalf("probed stream %q, want \"1\"", got)
 	}

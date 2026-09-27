@@ -21,8 +21,8 @@ import (
 // video through: what content-prober does not keep (the hvcC with profile,
 // tier and level, the Dolby Vision configuration record, the transfer) and
 // what no prober reports at all (whether the first packets carry Dolby
-// Vision RPUs). One ffprobe, run only for sessions that got past every
-// cheaper check of videoRouteFor.
+// Vision RPUs, the transfer the bitstream itself signals). One ffprobe, run
+// only for sessions that got past every cheaper check of videoRouteFor.
 const (
 	// sourceProbeTimeout bounds one attempt. It runs inside POST /session;
 	// the head of the file has just been read by content-prober and the
@@ -38,16 +38,27 @@ const (
 	// remux keyframe in base64 are a few MB.
 	sourceProbeMaxOutput = 64 << 20
 	// sourceFactsVersion names the layout of the cached file; a change of
-	// what is extracted bumps it and old files are probed again.
-	sourceFactsVersion = 1
+	// what is extracted bumps it and old files are probed again. 2: the
+	// transfer of the decoded frames (FrameColorTransfer).
+	sourceFactsVersion = 2
 )
 
 // sourceHEVCFacts is what the probe found out about the video stream.
 type sourceHEVCFacts struct {
-	Version       int    `json:"v"`
-	PixFmt        string `json:"pix_fmt"`
-	FieldOrder    string `json:"field_order,omitempty"`
+	Version    int    `json:"v"`
+	PixFmt     string `json:"pix_fmt"`
+	FieldOrder string `json:"field_order,omitempty"`
+	// ColorTransfer is ffprobe's stream-level transfer: the container's
+	// when it has colour information (an MKV Colour element, an MP4 colr
+	// box), else the bitstream's. Read the source's with transfer().
 	ColorTransfer string `json:"color_transfer,omitempty"`
+	// FrameColorTransfer is the transfer of the decoded frames: the HEVC
+	// VUI's (or an alternative-transfer SEI's), whatever the container
+	// says -- an MKV whose Colour element has a matrix and no transfer
+	// reports "unknown" at stream level over a PQ bitstream (measured on
+	// ffprobe 8.1.2). Frames is how many frames were decoded.
+	FrameColorTransfer string `json:"frame_color_transfer,omitempty"`
+	Frames             int    `json:"frames"`
 	// HVCC is the stream's extradata as found: an hvcC record for MKV and
 	// MP4 sources, Annex B parameter sets (or nothing) for TS.
 	HVCC []byte `json:"hvcc,omitempty"`
@@ -63,6 +74,34 @@ type sourceHEVCFacts struct {
 type doviRecord struct {
 	Profile       int `json:"profile"`
 	Compatibility int `json:"compatibility"`
+}
+
+// transfer is the source's transfer as the route reads it: of the
+// container's (ColorTransfer) and the bitstream's (FrameColorTransfer), the
+// one a browser would show wrong if the other were believed.
+func (f sourceHEVCFacts) transfer() string {
+	return strongerTransfer(f.ColorTransfer, f.FrameColorTransfer)
+}
+
+// transferRank orders transfers by what believing another costs: HLG
+// first (never passed through), then PQ (needs hdr-pq, labelled PQ), then
+// the rest.
+func transferRank(t string) int {
+	switch t {
+	case transferHLG:
+		return 2
+	case transferPQ:
+		return 1
+	}
+	return 0
+}
+
+// strongerTransfer is b when a names no transfer or b ranks above it, else a.
+func strongerTransfer(a, b string) string {
+	if a == "" || a == "unknown" || transferRank(b) > transferRank(a) {
+		return b
+	}
+	return a
 }
 
 // hvccHeader is the fixed head of an HEVCDecoderConfigurationRecord
@@ -100,6 +139,175 @@ func parseHVCC(b []byte) (hvccHeader, bool) {
 	return h, true
 }
 
+// HEVC NAL unit types of the parameter sets and SEI (ITU-T H.265 7.4.2.2).
+const (
+	nalVPS       = 32
+	nalSPS       = 33
+	nalPPS       = 34
+	nalSEIPrefix = 39
+	nalSEISuffix = 40
+)
+
+// outputHVCC is the hvcC a passthrough output of a source with hvcC b will
+// carry: the source's head with profile, tier, level and the flags as
+// FFmpeg's hvcC writer derives them from the parameter sets, which is what
+// the output's CODECS is built from. hevc_mp4toannexb turns the record's
+// arrays into Annex B extradata (libavcodec/bsf/hevc_mp4toannexb.c), and
+// movenc writes an hvcC from that anew (ff_isom_write_hvcc,
+// libavformat/hevc.c): from its defaults (flags all set, profile, tier and
+// level 0) it merges the profile_tier_level of every base-layer VPS and SPS
+// (hvcc_update_ptl) and never reads the source record's head.
+//
+// ok is false when the output cannot be made right: not an hvcC, arrays
+// that do not parse, a NAL type hevc_mp4toannexb refuses in extradata (the
+// run would fail), or no base-layer VPS, SPS and PPS in the record -- movenc
+// drops the parameter sets from the samples of an hvc1 track, so a set that
+// is only in-band would be in neither place.
+func outputHVCC(b []byte) (hvccHeader, bool) {
+	h, ok := parseHVCC(b)
+	if !ok {
+		return hvccHeader{}, false
+	}
+	merged := hevcPTL{compat: 0xffffffff, constraint: 1<<48 - 1}
+	var seen [64]bool
+	p := hvccMinSize
+	for n := int(b[22]); n > 0; n-- {
+		if p+3 > len(b) {
+			return hvccHeader{}, false
+		}
+		count := int(binary.BigEndian.Uint16(b[p+1:]))
+		p += 3
+		for ; count > 0; count-- {
+			if p+2 > len(b) {
+				return hvccHeader{}, false
+			}
+			size := int(binary.BigEndian.Uint16(b[p:]))
+			p += 2
+			if size < 2 || p+size > len(b) {
+				return hvccHeader{}, false
+			}
+			nal := b[p : p+size]
+			p += size
+			typ := int(nal[0]>>1) & 0x3f
+			switch typ {
+			case nalVPS, nalSPS, nalPPS, nalSEIPrefix, nalSEISuffix:
+			default:
+				return hvccHeader{}, false
+			}
+			if layer := int(nal[0]&1)<<5 | int(nal[1]>>3); layer != 0 {
+				continue
+			}
+			if typ == nalVPS || typ == nalSPS {
+				ptl, ok := parsePSProfileTierLevel(nalRBSP(nal), typ)
+				if !ok {
+					return hvccHeader{}, false
+				}
+				merged.update(ptl)
+			}
+			seen[typ] = true
+		}
+	}
+	if !seen[nalVPS] || !seen[nalSPS] || !seen[nalPPS] {
+		return hvccHeader{}, false
+	}
+	h.profileSpace, h.tierHigh, h.profileIdc, h.levelIdc = merged.space, merged.tier, merged.profile, merged.level
+	h.compat = merged.compat
+	for i := range h.constraint {
+		h.constraint[i] = byte(merged.constraint >> (40 - 8*i))
+	}
+	return h, true
+}
+
+// hevcPTL is the general part of a profile_tier_level() (H.265 7.3.3).
+type hevcPTL struct {
+	space      int
+	tier       bool
+	profile    int
+	compat     uint32
+	constraint uint64 // 48 bits
+	level      int
+}
+
+// update merges ptl into p the way FFmpeg's hvcC writer does
+// (hvcc_update_ptl): the last profile space, the higher tier and the level
+// within it, the higher profile, the flags every set has.
+func (p *hevcPTL) update(ptl hevcPTL) {
+	p.space = ptl.space
+	if !p.tier && ptl.tier {
+		p.level = ptl.level
+	} else if ptl.level > p.level {
+		p.level = ptl.level
+	}
+	p.tier = p.tier || ptl.tier
+	if ptl.profile > p.profile {
+		p.profile = ptl.profile
+	}
+	p.compat &= ptl.compat
+	p.constraint &= ptl.constraint
+}
+
+// parsePSProfileTierLevel reads the general profile_tier_level of a
+// base-layer VPS or SPS from its RBSP (NAL header included): after 32 bits
+// of VPS fields, or 8 of SPS fields (H.265 7.3.2.1, 7.3.2.2).
+func parsePSProfileTierLevel(rbsp []byte, typ int) (hevcPTL, bool) {
+	skip := 8
+	if typ == nalVPS {
+		skip = 32
+	}
+	r := bitReader{b: rbsp, pos: 16 + skip}
+	var ptl hevcPTL
+	ptl.space = int(r.read(2))
+	ptl.tier = r.read(1) == 1
+	ptl.profile = int(r.read(5))
+	ptl.compat = uint32(r.read(32))
+	ptl.constraint = r.read(48)
+	ptl.level = int(r.read(8))
+	return ptl, !r.over
+}
+
+// nalRBSP is a NAL unit with its emulation prevention bytes taken out (the
+// 03 of every 00 00 03 after the 2-byte header), as FFmpeg reads it
+// (ff_nal_unit_extract_rbsp).
+func nalRBSP(nal []byte) []byte {
+	out := make([]byte, 0, len(nal))
+	zeros := 0
+	for i, c := range nal {
+		if i >= 2 {
+			if zeros >= 2 && c == 3 {
+				zeros = 0
+				continue
+			}
+			if c == 0 {
+				zeros++
+			} else {
+				zeros = 0
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// bitReader reads big-endian bit fields; over is set by a read past the end.
+type bitReader struct {
+	b    []byte
+	pos  int
+	over bool
+}
+
+func (r *bitReader) read(n int) uint64 {
+	var v uint64
+	for ; n > 0; n-- {
+		if r.pos >= 8*len(r.b) {
+			r.over = true
+			return 0
+		}
+		v = v<<1 | uint64(r.b[r.pos/8]>>(7-uint(r.pos%8))&1)
+		r.pos++
+	}
+	return v
+}
+
 // ffprobe's JSON, the parts read here.
 type ffprobeSourceOutput struct {
 	Streams []struct {
@@ -111,10 +319,37 @@ type ffprobeSourceOutput struct {
 		Extradata     string                   `json:"extradata"`
 		SideDataList  []map[string]interface{} `json:"side_data_list"`
 	} `json:"streams"`
-	Packets []struct {
-		StreamIndex int    `json:"stream_index"`
-		Data        string `json:"data"`
-	} `json:"packets"`
+	// With both -show_packets and -show_frames ffprobe prints one array of
+	// both, in read order, each entry with its type (fftools/ffprobe.c,
+	// SECTION_ID_PACKETS_AND_FRAMES); with one of them, its own array.
+	PacketsAndFrames []ffprobeSourceEntry `json:"packets_and_frames"`
+	Packets          []ffprobeSourceEntry `json:"packets"`
+	Frames           []ffprobeSourceEntry `json:"frames"`
+}
+
+// ffprobeSourceEntry is a packet (Data) or a frame (MediaType,
+// ColorTransfer) of ffprobe's JSON.
+type ffprobeSourceEntry struct {
+	Type          string `json:"type"`
+	StreamIndex   int    `json:"stream_index"`
+	Data          string `json:"data"`
+	MediaType     string `json:"media_type"`
+	ColorTransfer string `json:"color_transfer"`
+}
+
+// packetsAndFrames splits ffprobe's entries into packets and frames.
+func (o ffprobeSourceOutput) packetsAndFrames() (packets, frames []ffprobeSourceEntry) {
+	packets = append(packets, o.Packets...)
+	frames = append(frames, o.Frames...)
+	for _, e := range o.PacketsAndFrames {
+		switch e.Type {
+		case "packet":
+			packets = append(packets, e)
+		case "frame":
+			frames = append(frames, e)
+		}
+	}
+	return packets, frames
 }
 
 // ffprobe's name for AV_PKT_DATA_DOVI_CONF (libavcodec/packet.c).
@@ -168,7 +403,8 @@ func parseSourceProbe(out []byte, stream int) (sourceHEVCFacts, error) {
 	if h, ok := parseHVCC(f.HVCC); ok {
 		lengthSize = h.lengthSize
 	}
-	for _, p := range o.Packets {
+	packets, frames := o.packetsAndFrames()
+	for _, p := range packets {
 		if p.StreamIndex != stream {
 			continue
 		}
@@ -183,6 +419,21 @@ func parseSourceProbe(out []byte, stream int) (sourceHEVCFacts, error) {
 	}
 	if f.Packets == 0 {
 		return sourceHEVCFacts{}, errors.New("no packet of the stream")
+	}
+	// The frames' transfer: the first that names one, or a stronger one
+	// (transferRank) should they differ.
+	for _, fr := range frames {
+		if fr.StreamIndex != stream || fr.MediaType != "video" {
+			continue
+		}
+		f.Frames++
+		f.FrameColorTransfer = strongerTransfer(f.FrameColorTransfer, fr.ColorTransfer)
+	}
+	// Without a decoded frame the bitstream's transfer is unknown, and the
+	// container's alone is what hid PQ: a look that could not see is a
+	// failed look, not an SDR source.
+	if f.Frames == 0 {
+		return sourceHEVCFacts{}, errors.New("no frame of the stream decoded")
 	}
 	return f, nil
 }
@@ -259,10 +510,17 @@ func hasDolbyVisionNAL(pkt []byte, lengthSize int) bool {
 }
 
 // sourceProbeArgs is the ffprobe command line for stream of sourceURL:
-// the stream with its extradata and side data, and its first packets with
-// their data. -analyzeduration is left alone: 0 would not shorten anything
-// (FFmpeg reads 0 as its 5 s default, libavformat/demux.c); -probesize caps
-// the read.
+// the stream with its extradata and side data, its first packets with
+// their data, and the keyframe among them decoded (the interval's packets
+// go to the decoder, flushed at the interval's end, fftools/ffprobe.c
+// read_interval_packets; -skip_frame nokey leaves the others undecoded):
+// the bitstream's own transfer, which the stream level hides whenever the
+// container has colour information of its own. The decode costs 8-26 ms on
+// the synthetic e2e sources and 0.6 s on a 7.3 MB 4K 10-bit keyframe (2
+// CPUs, one decoder thread; measured on 8.1.2), once per source and node
+// (the facts are cached). -analyzeduration is left alone: 0 would not
+// shorten anything (FFmpeg reads 0 as its 5 s default,
+// libavformat/demux.c); -probesize caps the read.
 func sourceProbeArgs(sourceURL string, stream int) []string {
 	return []string{
 		"-v", "error",
@@ -271,7 +529,8 @@ func sourceProbeArgs(sourceURL string, stream int) []string {
 		"-probesize", sourceProbeSize,
 		"-select_streams", fmt.Sprintf("%d", stream),
 		"-show_streams",
-		"-show_packets", "-read_intervals", fmt.Sprintf("%%+#%d", sourceProbePackets),
+		"-show_packets", "-show_frames", "-skip_frame", "nokey",
+		"-read_intervals", fmt.Sprintf("%%+#%d", sourceProbePackets),
 		"-show_data", "-data_dump_format", "base64",
 		"-of", "json",
 		sourceURL,

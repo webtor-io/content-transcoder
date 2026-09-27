@@ -345,3 +345,53 @@ func TestSessionSegmentsServedMetric(t *testing.T) {
 		t.Errorf("a session that never ran was observed")
 	}
 }
+
+// X-Video-Route-Reason names the reason only on the refusals the route
+// causes: the old route will not encode the video (over 1080p, or encoding
+// disabled), or the check that could have passed it did not answer. A
+// source with nothing playable is refused whatever the route: no header,
+// and the route metric counts it as an error, not a refusal.
+func TestSessionCreate_ReasonHeaderOnlyOnRouteRefusals(t *testing.T) {
+	noSourceProbe(t)
+	fakeFFmpeg(t)
+	all := "hevc8,hevc10,hevc8-2160,hevc10-2160,hevc-high,hdr-pq"
+	post := func(web *Web, source, decode string) *httptest.ResponseRecorder {
+		q := ""
+		if decode != "" {
+			q = "?decode=" + url.QueryEscape(decode)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/session"+q, nil)
+		r.Header.Set("X-Source-Url", goldenSourceURL(source))
+		w := httptest.NewRecorder()
+		web.handler.ServeHTTP(w, r)
+		return w
+	}
+	for _, c := range []struct {
+		name, source, decode string
+		disabled             bool
+		code                 int
+		body, header, label  string
+		reason               string
+	}{
+		{"nothing playable, capability off", "nothing-playable", all, false, 415, ErrNoPlayableStreams.Error(), "", videoRouteError, reasonPassthroughOff},
+		{"nothing playable, no declaration", "nothing-playable", "", false, 415, ErrNoPlayableStreams.Error(), "", videoRouteError, reasonNoDeclaration},
+		{"over 1080p", "hevc-2160-hdr", "", false, 415, ErrResolutionNotSupported.Error(), reasonNoDeclaration, videoRouteRefused, reasonNoDeclaration},
+		{"encoding disabled", "hevc-1080-main10-aac", "", true, 415, ErrTranscodingDisabled.Error(), reasonNoDeclaration, videoRouteRefused, reasonNoDeclaration},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			web, _, _ := goldenWeb(t, func(w *Web) { w.hlsBuilder.disableVideoTranscoding = c.disabled })
+			counter := metricVideoRouteTotal.WithLabelValues(c.label, c.reason)
+			before := testutil.ToFloat64(counter)
+			w := post(web, c.source, c.decode)
+			if w.Code != c.code || w.Body.String() != c.body+"\n" {
+				t.Fatalf("%d %q, want %d %q", w.Code, w.Body.String(), c.code, c.body)
+			}
+			if got := w.Header().Get(routeReasonHeader); got != c.header {
+				t.Errorf("%s = %q, want %q", routeReasonHeader, got, c.header)
+			}
+			if d := testutil.ToFloat64(counter) - before; d != 1 {
+				t.Errorf("video_route_total{%s,%s} +%v, want +1", c.label, c.reason, d)
+			}
+		})
+	}
+}

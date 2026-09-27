@@ -14,8 +14,8 @@ const (
 	videoRouteCopy        = runModeCopy
 	videoRouteReencode    = runModeReencode
 	videoRouteAudio       = runModeAudio
-	videoRouteRefused     = "refused" // 415, or 503 when the source check failed
-	videoRouteError       = "error"   // any other failure after the route was decided
+	videoRouteRefused     = "refused" // the route's 415 (the video would need encoding), or the 503 of a failed source check
+	videoRouteError       = "error"   // any other failure after the route was decided (nothing playable, a start that failed)
 )
 
 // Route reasons: why the session got its route, a closed set. Every
@@ -36,7 +36,7 @@ const (
 	reasonPixFmt             = "pix_fmt"             // not 4:2:0 8/10-bit
 	reasonProfile            = "profile"             // not Main or Main10 (the only profiles tokens speak for)
 	reasonInterlaced         = "interlaced"          // fields, not frames
-	reasonNoHVCC             = "no_hvcc"             // no hvcC with parameter sets (Annex B source)
+	reasonNoHVCC             = "no_hvcc"             // no hvcC with the parameter sets the output needs (Annex B source, sets only in-band)
 	reasonNeedsMain          = "needs_main"          // 8-bit, and the client declared no HEVC depth at all
 	reasonNeedsMain10        = "needs_main10"        // 10-bit, the client declared 8-bit only
 	reasonNeedsHighTier      = "needs_high_tier"     // tier High without hevc-high
@@ -172,6 +172,13 @@ type routeDecision struct {
 	// facts are what the source probe found, for a passthrough decision:
 	// the output's hvcC is checked against the source's it was made on.
 	facts *sourceHEVCFacts
+	// refused is set by openSessionWith when the session was not opened
+	// because of this decision: the old route would not encode the video
+	// (over 1080p, or encoding disabled), or the check that could have
+	// passed it through did not answer. Only such an answer names the
+	// reason (X-Video-Route-Reason); a source with nothing playable is
+	// refused whatever the route.
+	refused bool
 }
 
 func oldRoute(reason string) routeDecision { return routeDecision{reason: reason} }
@@ -224,7 +231,7 @@ func routeForFacts(src sourceVideo, decl viewerDeclaration, f sourceHEVCFacts) r
 		case 7:
 			return oldRoute(reasonDV7)
 		}
-		if f.DOVI.Profile != 8 || !doviBaseMatchesTransfer(f.DOVI.Compatibility, f.ColorTransfer) {
+		if f.DOVI.Profile != 8 || !doviBaseMatchesTransfer(f.DOVI.Compatibility, f.transfer()) {
 			return oldRoute(reasonDVBase)
 		}
 	}
@@ -237,7 +244,10 @@ func routeForFacts(src sourceVideo, decl viewerDeclaration, f sourceHEVCFacts) r
 	if interlacedFieldOrders[f.FieldOrder] {
 		return oldRoute(reasonInterlaced)
 	}
-	h, ok := parseHVCC(f.HVCC)
+	// Profile, tier and level as the output will carry them (and CODECS
+	// will say): FFmpeg rebuilds the record from the parameter sets, the
+	// source's head plays no part.
+	h, ok := outputHVCC(f.HVCC)
 	if !ok {
 		return oldRoute(reasonNoHVCC)
 	}
@@ -263,10 +273,11 @@ func routeForFacts(src sourceVideo, decl viewerDeclaration, f sourceHEVCFacts) r
 	if h.tierHigh && !decl.has(tokenHEVCHigh) {
 		return oldRoute(reasonNeedsHighTier)
 	}
-	if f.ColorTransfer == transferPQ && !decl.has(tokenHDRPQ) {
+	transfer := f.transfer()
+	if transfer == transferPQ && !decl.has(tokenHDRPQ) {
 		return oldRoute(reasonNeedsPQ)
 	}
-	if f.ColorTransfer == transferHLG {
+	if transfer == transferHLG {
 		return oldRoute(reasonHLGLater)
 	}
 	return routeDecision{passthrough: true, reason: reasonOK, facts: &f}

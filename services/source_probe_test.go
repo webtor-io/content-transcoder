@@ -89,6 +89,39 @@ var sourceProbeFixtures = []sourceProbeFixture{
 		}
 	}, reasonDV5, ""},
 	{"dv7.mp4", 0, nil, reasonDV7, ""},
+	// PQ in the VUI under an MKV Colour element with a matrix and no
+	// transfer: the stream level says nothing, the frames say PQ.
+	{"pqvui_colourunspec.mkv", 0, func(t *testing.T, f sourceHEVCFacts) {
+		if f.ColorTransfer == transferPQ || f.FrameColorTransfer != transferPQ || f.transfer() != transferPQ || f.Frames == 0 {
+			t.Errorf("PQ only in the bitstream: %+v", f)
+		}
+	}, reasonOK, reasonNeedsPQ},
+	// hvcC heads that disagree with the SPS (the head's level patched):
+	// the output's record is rebuilt from the SPS (FFmpeg 8.1.2 wrote
+	// hvc1.1.6.L30.90 and hvc1.1.6.H153.90 for them), and the route goes by
+	// what the output will say.
+	{"lvl_head_high.mp4", 0, func(t *testing.T, f sourceHEVCFacts) {
+		head, _ := parseHVCC(f.HVCC)
+		out, ok := outputHVCC(f.HVCC)
+		if head.levelIdc != 153 || !ok || out.levelIdc != 30 {
+			t.Errorf("head L%d, output L%d (%v)", head.levelIdc, out.levelIdc, ok)
+		}
+		probe := func() (sourceHEVCFacts, error) { return f, nil }
+		if got := videoRouteFor(hd, decl("hevc8,hevc10"), on, probe).reason; got != reasonOK {
+			t.Errorf("an SPS at level 1 needs no 2160 token, got %s", got)
+		}
+	}, reasonOK, ""},
+	{"lvl_head_low.mp4", 0, func(t *testing.T, f sourceHEVCFacts) {
+		head, _ := parseHVCC(f.HVCC)
+		out, ok := outputHVCC(f.HVCC)
+		if head.levelIdc != 30 || !ok || out.levelIdc != 153 || !out.tierHigh {
+			t.Errorf("head L%d, output %v L%d (%v)", head.levelIdc, out.tierHigh, out.levelIdc, ok)
+		}
+		probe := func() (sourceHEVCFacts, error) { return f, nil }
+		if got := videoRouteFor(hd, decl("hevc8,hevc10,hevc-high"), on, probe).reason; got != reasonNeeds2160 {
+			t.Errorf("an SPS at level 5.1 needs a 2160 token, got %s", got)
+		}
+	}, reasonOK, ""},
 }
 
 func (fx sourceProbeFixture) verify(t *testing.T, out []byte) {
@@ -187,19 +220,43 @@ func TestParseSourceProbe_Failures(t *testing.T) {
 	stream := func(o map[string]interface{}) map[string]interface{} {
 		return o["streams"].([]interface{})[0].(map[string]interface{})
 	}
+	// entries keeps the packets_and_frames entries keep says yes to, after
+	// edit.
+	entries := func(o map[string]interface{}, keep func(e map[string]interface{}) bool) {
+		var out []interface{}
+		for _, e := range o["packets_and_frames"].([]interface{}) {
+			if keep(e.(map[string]interface{})) {
+				out = append(out, e)
+			}
+		}
+		o["packets_and_frames"] = out
+	}
+	isType := func(typ string) func(e map[string]interface{}) bool {
+		return func(e map[string]interface{}) bool { return e["type"] == typ }
+	}
 	for name, out := range map[string][]byte{
-		"not json":      []byte("ffprobe: error"),
-		"empty":         []byte("{}"),
-		"other stream":  mutate(func(o map[string]interface{}) { stream(o)["index"] = 3 }),
-		"not hevc":      mutate(func(o map[string]interface{}) { stream(o)["codec_name"] = "h264" }),
-		"no pix_fmt":    mutate(func(o map[string]interface{}) { delete(stream(o), "pix_fmt") }),
-		"no packets":    mutate(func(o map[string]interface{}) { delete(o, "packets") }),
+		"not json":     []byte("ffprobe: error"),
+		"empty":        []byte("{}"),
+		"other stream": mutate(func(o map[string]interface{}) { stream(o)["index"] = 3 }),
+		"not hevc":     mutate(func(o map[string]interface{}) { stream(o)["codec_name"] = "h264" }),
+		"no pix_fmt":   mutate(func(o map[string]interface{}) { delete(stream(o), "pix_fmt") }),
+		"no packets":   mutate(func(o map[string]interface{}) { entries(o, isType("frame")) }),
+		// The frames are what the bitstream's transfer is read from.
+		"no frames": mutate(func(o map[string]interface{}) { entries(o, isType("packet")) }),
+		"frames of another stream": mutate(func(o map[string]interface{}) {
+			entries(o, func(e map[string]interface{}) bool {
+				if e["type"] == "frame" {
+					e["stream_index"] = 3
+				}
+				return true
+			})
+		}),
 		"bad extradata": mutate(func(o map[string]interface{}) { stream(o)["extradata"] = "\n!!!\n" }),
 		"bad dv record": mutate(func(o map[string]interface{}) {
 			stream(o)["side_data_list"] = []interface{}{map[string]interface{}{"side_data_type": doviSideDataType}}
 		}),
 		"packet garbled": mutate(func(o map[string]interface{}) {
-			o["packets"].([]interface{})[0].(map[string]interface{})["data"] = "\n%%%\n"
+			o["packets_and_frames"].([]interface{})[0].(map[string]interface{})["data"] = "\n%%%\n"
 		}),
 	} {
 		if _, err := parseSourceProbe(out, 0); err == nil {
@@ -208,6 +265,23 @@ func TestParseSourceProbe_Failures(t *testing.T) {
 	}
 	if _, err := parseSourceProbe(good, 0); err != nil {
 		t.Fatalf("the unmutated fixture must parse: %v", err)
+	}
+	// ffprobe with one of -show_packets and -show_frames prints its own
+	// array; the parser reads that shape too.
+	split := mutate(func(o map[string]interface{}) {
+		var packets, frames []interface{}
+		for _, e := range o["packets_and_frames"].([]interface{}) {
+			if e.(map[string]interface{})["type"] == "packet" {
+				packets = append(packets, e)
+			} else {
+				frames = append(frames, e)
+			}
+		}
+		delete(o, "packets_and_frames")
+		o["packets"], o["frames"] = packets, frames
+	})
+	if f, err := parseSourceProbe(split, 0); err != nil || f.Packets != 2 || f.Frames != 1 {
+		t.Errorf("separate arrays: %+v %v", f, err)
 	}
 }
 
@@ -386,7 +460,7 @@ func TestSourceProbeArgs(t *testing.T) {
 		"-protocol_whitelist http,https,tcp,tls",
 		"-probesize 5000000",
 		"-select_streams 3",
-		"-read_intervals %+#2",
+		"-show_packets -show_frames -skip_frame nokey -read_intervals %+#2",
 		"-show_data -data_dump_format base64",
 		"-of json",
 	} {

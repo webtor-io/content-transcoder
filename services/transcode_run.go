@@ -200,7 +200,17 @@ func (r *TranscodeRun) resolveRealStartOnce() {
 		if done || r.seekTime <= 0 || !r.isVideoCopy() {
 			return
 		}
-		k := r.resolveRealStart()
+		k, result := r.resolveRealStart()
+		metricRunRealStartTotal.WithLabelValues(r.runMode(), result).Inc()
+		// A passthrough run without an answer starts from the quantized
+		// seek (what RealStart reports unresolved), as a copy run's seek
+		// does, and keeps nothing: kept, one probe timing out on a cold
+		// source fixed that offset -- up to a GOP off, subtitles with it --
+		// for every later run of the key on the pod. The next run asks
+		// again. The copy route keeps even a fallback, as it always has.
+		if result != realStartOK && r.h.passthrough {
+			return
+		}
 		r.mu.Lock()
 		r.realStart = k
 		r.realStartResolved = true
@@ -241,13 +251,13 @@ func (r *TranscodeRun) startLocked() error {
 	if r.seekTime > 0 {
 		if r.h.passthrough {
 			// resolveRealStartOnce ran before the lock (Start); without an
-			// answer the real start is the quantized seek, and the run
-			// behaves as a copy run's seek does.
-			realStart := r.seekTime
+			// answer the real start is the quantized seek, the audio is
+			// not cut at it, and the run behaves as a copy run's seek does.
+			realStart, trimAudio := r.seekTime, []string(nil)
 			if r.realStartResolved {
-				realStart = r.realStart
+				realStart, trimAudio = r.realStart, r.h.passthroughAudioMaps()
 			}
-			params = injectPassthroughSeekParams(params, r.seekTime, realStart)
+			params = injectPassthroughSeekParams(params, r.seekTime, realStart, trimAudio)
 		} else {
 			params = injectSeekParams(params, r.seekTime, r.isVideoCopy())
 		}
@@ -653,8 +663,9 @@ func (r *TranscodeRun) RealStart() float64 {
 // resolveRealStart asks probeRunStart for the keyframe and falls back to
 // the quantized seek time on any answer that cannot be right: an error, a
 // keyframe after the seek point, or one implausibly far before it (a
-// broken index; 60 s is well past any GOP we transcode). Caller holds mu.
-func (r *TranscodeRun) resolveRealStart() float64 {
+// broken index; 60 s is well past any GOP we transcode). result says which
+// (realStart*).
+func (r *TranscodeRun) resolveRealStart() (float64, string) {
 	stream := "v:0"
 	if r.h != nil {
 		if sp := r.h.primaryVideoStreamSpecifier(); sp != "" {
@@ -670,13 +681,13 @@ func (r *TranscodeRun) resolveRealStart() float64 {
 	k, err := probe(r.runCtx, r.sourceURL, stream, r.seekTime)
 	if err != nil {
 		r.logger.WithError(err).Warn("run: failed to resolve the real start, reporting the quantized seek")
-		return r.seekTime
+		return r.seekTime, realStartFailed
 	}
 	if k < 0 || k > r.seekTime || r.seekTime-k > 60 {
 		r.logger.WithField("keyframe", fmt.Sprintf("%.3f", k)).Warn("run: implausible keyframe, reporting the quantized seek")
-		return r.seekTime
+		return r.seekTime, realStartImplausible
 	}
-	return k
+	return k, realStartOK
 }
 
 func (r *TranscodeRun) isVideoCopy() bool {

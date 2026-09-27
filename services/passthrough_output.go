@@ -124,16 +124,21 @@ var buildPassthroughParams = func(h *HLS, in *u.URL, out string, opts ParamOptio
 
 // passthroughSeekInput is the input seek of a passthrough run at the
 // quantized time seek: the copy route's (-noaccurate_seek: the demuxer's
-// keyframe at or before it), with -ss read as an absolute timestamp rather
-// than one counted from the file's start time. The run and the probe of
-// where it lands (probePassthroughStart) both use exactly this.
+// keyframe at or before it), -ss counted from the file's start time like
+// every other run's, so a passthrough seek run and the run from 0 share a
+// timeline whatever the file's start_time (measured: a source remuxed with
+// start_time 5 put a seek to 30 on the keyframe at movie 20 and the
+// offset at 19.917 -- with -seek_timestamp 1 the offset read 24.917). The
+// run and the probe of where it lands (probePassthroughStart) both use
+// exactly this.
 func passthroughSeekInput(seek float64) []string {
-	return []string{"-seek_timestamp", "1", "-ss", fmt.Sprintf("%.3f", seek), "-noaccurate_seek"}
+	return []string{"-ss", fmt.Sprintf("%.3f", seek), "-noaccurate_seek"}
 }
 
 // injectPassthroughSeekParams is the seek of a passthrough run: its input
 // seek (passthroughSeekInput), and the output's time zero moved from the
-// quantized time to realStart, the first timestamp that seek gives.
+// quantized time to realStart, the first timestamp that seek gives. The
+// audio outputs whose -map is in trimAudio start at that zero too.
 //
 // Not -ss <realStart>: FFmpeg's input seek goes back to the keyframe at or
 // before the target, and for a format without AVFMT_SEEK_TO_PTS (matroska)
@@ -150,28 +155,63 @@ func passthroughSeekInput(seek float64) []string {
 // out at 0.000 and 5.000). With -itsoffset <seek-realStart> all outputs
 // count from realStart (1.063 and 6.063 for realStart 19.937, the
 // keyframe's DTS), and the video's first DTS is 0, so it is not shifted.
-func injectPassthroughSeekParams(params []string, seek, realStart float64) []string {
-	result := make([]string, 0, len(params)+7)
-	for _, p := range params {
-		if p == "-i" {
+//
+// The audio is not: the demuxer's seek lands the audio a little before the
+// video's keyframe (the first copied AAC packet 162 ms before realStart on
+// the e2e A/V source), and each output shifts its own negative timestamps
+// to zero, so every seek played the audio that much late. -ss 0 on an audio
+// output drops what comes before zero: a copied packet whose DTS is below
+// the output's start time (fftools/ffmpeg_mux.c of_streamcopy), encoded
+// samples through a trim at it (ffmpeg_filter.c insert_trim). Measured on
+// FFmpeg 8.1.2 through the hls muxer: A/V after the seek from +162 ms to
+// -8 ms (copied AAC) and from +184 ms to +43 ms (libfdk_aac, its priming),
+// against -62 and -40 ms from the start. trimAudio is empty when realStart
+// is not resolved: the video then starts at the keyframe before the zero,
+// and audio cut at the zero would run ahead of it by up to a GOP.
+func injectPassthroughSeekParams(params []string, seek, realStart float64, trimAudio []string) []string {
+	trim := make(map[string]bool, len(trimAudio))
+	for _, m := range trimAudio {
+		trim[m] = true
+	}
+	result := make([]string, 0, len(params)+7+2*len(trimAudio))
+	for i, p := range params {
+		switch {
+		case p == "-i":
 			result = append(result, passthroughSeekInput(seek)...)
 			if d := seek - realStart; d > 0 {
 				result = append(result, "-itsoffset", fmt.Sprintf("%.6f", d))
 			}
+		case p == "-map" && i+1 < len(params) && trim[params[i+1]]:
+			result = append(result, "-ss", "0")
 		}
 		result = append(result, p)
 	}
 	return result
 }
 
+// passthroughAudioMaps are the -map values of the session's audio outputs.
+func (h *HLS) passthroughAudioMaps() []string {
+	var maps []string
+	for _, a := range h.audio {
+		maps = append(maps, fmt.Sprintf("0:%d", a.s.GetIndex()))
+	}
+	return maps
+}
+
 // probePassthroughStart resolves the real start of a passthrough run's
 // seek: the earliest timestamp (DTS, else PTS) of the first video packet the
-// run's own input seek gives. A variable so tests stub the exec.
+// run's own input seek gives, in movie time. A variable so tests stub the
+// exec.
 var probePassthroughStart = ffmpegSeekStart
 
 // ffmpegSeekStart asks FFmpeg itself, with the run's seek options
-// (passthroughSeekInput) and -copyts, for the first packet of stream, and
-// reads its timestamps off the framecrc muxer.
+// (passthroughSeekInput), for the first packet of stream, and reads its
+// timestamps off the framecrc muxer. Without -copyts they come relative to
+// the seek point, as the run's do (fftools/ffmpeg_demux.c: ts_offset is
+// minus the seek plus the file's start time), and a keyframe before it is
+// negative: the real start is seek plus that. Measured on 8.1.2: -10.083 for
+// a seek to 30 over the keyframe at movie 20.000 (DTS 19.917), on the
+// source and on its copy remuxed with start_time 5.
 //
 // Not ffprobe (probeRunStart): its -read_intervals seek has no dts
 // heuristic, so for an MKV with B-frames it names a keyframe the run does
@@ -180,7 +220,8 @@ var probePassthroughStart = ffmpegSeekStart
 // at 20.000 -- and it reports no DTS for matroska, where FFmpeg guesses one
 // (19.937 for a keyframe at 20.020 with two frames of B-frame delay): with
 // the PTS as zero, the video's first DTS is negative and its output shifts
-// it away, apart from the subtitles'. Measured on 8.1.2.
+// it away, apart from the subtitles'. Its timestamps are the file's, too,
+// not counted from its start time.
 func ffmpegSeekStart(ctx context.Context, sourceURL string, stream string, seek float64) (float64, error) {
 	// The URL comes from a request header and goes to FFmpeg as-is (an
 	// exec argument, no shell); one that parses as an option is refused.
@@ -195,12 +236,16 @@ func ffmpegSeekStart(ctx context.Context, sourceURL string, stream string, seek 
 	defer cancel()
 	args := []string{"-nostdin", "-v", "error", "-protocol_whitelist", "http,https,tcp,tls"}
 	args = append(args, passthroughSeekInput(seek)...)
-	args = append(args, "-copyts", "-i", sourceURL, "-map", "0:"+stream, "-c", "copy", "-frames:v", "1", "-f", "framecrc", "-")
+	args = append(args, "-i", sourceURL, "-map", "0:"+stream, "-c", "copy", "-frames:v", "1", "-f", "framecrc", "-")
 	out, err := exec.CommandContext(ctx, ffmpegPath, args...).Output()
 	if err != nil {
 		return 0, errors.Wrap(err, "ffmpeg failed")
 	}
-	return parseFrameCRCStart(out)
+	first, err := parseFrameCRCStart(out)
+	if err != nil {
+		return 0, err
+	}
+	return seek + first, nil
 }
 
 // parseFrameCRCStart reads the first packet of FFmpeg's framecrc output:
@@ -369,11 +414,12 @@ const (
 	codecsMismatchUnbuildable = "unbuildable"
 )
 
-// codecsMismatches lists what of out differs from src, the source's hvcC
-// the route was decided on: hevc_mp4toannexb rebuilds the record from the
-// parameter sets (ff_isom_write_hvcc merges the VPS and SPS values), so the
-// two need not agree, and a decision made on one while the player is told
-// the other is a bug to hear about.
+// codecsMismatches lists what of out, the output's hvcC, differs from src,
+// what the route was decided on: outputHVCC's reading of the source, which
+// merges the parameter sets as FFmpeg's writer does (ff_isom_write_hvcc;
+// the source record's head plays no part). A difference means that reading
+// is wrong, and a decision made on one while the player is told the other
+// is a bug to hear about.
 func codecsMismatches(src, out hvccHeader) []string {
 	var m []string
 	if src.profileSpace != out.profileSpace || src.profileIdc != out.profileIdc {
@@ -435,7 +481,7 @@ func (s *HLS) passthroughMasterPlaylist(videoCodecs string, bandwidth int64) str
 		codecs += ",mp4a.40.2"
 	}
 	videoRange := "SDR"
-	if s.passFacts != nil && s.passFacts.ColorTransfer == transferPQ {
+	if s.passFacts != nil && s.passFacts.transfer() == transferPQ {
 		videoRange = "PQ"
 	}
 	fmt.Fprintf(&res, `#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d,CODECS="%s",VIDEO-RANGE=%s`,
@@ -597,7 +643,7 @@ func (s *Session) buildPassthroughMaster(run *TranscodeRun, initPath string) err
 	}
 	codecs := hevcCodecString(fourcc, out)
 	if s.h.passFacts != nil {
-		if src, ok := parseHVCC(s.h.passFacts.HVCC); ok {
+		if src, ok := outputHVCC(s.h.passFacts.HVCC); ok {
 			if diff := codecsMismatches(src, out); len(diff) > 0 {
 				for _, f := range diff {
 					metricPassthroughCodecsMismatch.WithLabelValues(f).Inc()

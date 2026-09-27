@@ -81,9 +81,20 @@ func TestPassthroughCapability_FileReloadsWithoutRestart(t *testing.T) {
 	if got := len(capabilityLines(hook)); got != before {
 		t.Errorf("unchanged file logged %d more lines", got-before)
 	}
-	want := []string{"HEVC passthrough: off", "HEVC passthrough: on", "HEVC passthrough: off", "HEVC passthrough: on"}
+	// The start-up line (the flag's), the first read of the file although
+	// it says the same, then every change.
+	want := []string{"HEVC passthrough: off", "HEVC passthrough: off", "HEVC passthrough: on", "HEVC passthrough: off", "HEVC passthrough: on"}
 	if got := capabilityLines(hook); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("log lines %q, want %q", got, want)
+	}
+	var sources []string
+	for _, e := range hook.AllEntries() {
+		if strings.HasPrefix(e.Message, "HEVC passthrough:") {
+			sources = append(sources, e.Data["source"].(string))
+		}
+	}
+	if len(sources) < 2 || sources[0] != "flag, until the file is read" || sources[1] != file {
+		t.Errorf("sources %q: the file's first read is its own line", sources)
 	}
 }
 

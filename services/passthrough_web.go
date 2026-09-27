@@ -27,20 +27,33 @@ var passthroughMasterTimeout = 5 * time.Minute
 // order does not promise (not measured).
 var passthroughInitWait = 10 * time.Second
 
+// passthroughMasterAttempts is how many processes a master request waits
+// for: a process that dies before its first cut is restarted once more
+// (within the session's restart budget) rather than failing the request --
+// hls.js retries a master fewer times than a variant, and the first run of
+// a source that dies on its timestamps at 0 comes back lenient.
+const passthroughMasterAttempts = 2
+
 // passthroughMaster makes sure a passthrough session's master playlist
 // exists before it is read: it is written from the init of the run's
 // current process (Session.writePassthroughMaster), so the run must be
-// running -- a first process that died before its init is restarted, as for
-// a variant playlist. It answers the request itself, and returns false,
+// running -- a process that died before its init is restarted, as for a
+// variant playlist. It answers the request itself, and returns false,
 // when there is no master to serve.
 func (s *Web) passthroughMaster(w http.ResponseWriter, r *http.Request, sess *Session) bool {
 	if fileExists(filepath.Join(sess.outputDir, "index.m3u8")) {
 		return true
 	}
-	if !sess.IsRunning() && !s.ensureRunningFor(w, sess, "index.m3u8") {
-		return false
+	var err error
+	for attempt := 0; attempt < passthroughMasterAttempts; attempt++ {
+		if !sess.IsRunning() && !s.ensureRunningFor(w, sess, "index.m3u8") {
+			return false
+		}
+		err = sess.writePassthroughMaster(r.Context(), passthroughMasterTimeout)
+		if !errors.Is(err, errPlaylistNotRunning) {
+			break
+		}
 	}
-	err := sess.writePassthroughMaster(r.Context(), passthroughMasterTimeout)
 	switch {
 	case err == nil:
 		return true
@@ -48,6 +61,14 @@ func (s *Web) passthroughMaster(w http.ResponseWriter, r *http.Request, sess *Se
 		return false
 	case errors.Is(err, errCodecsUnbuildable):
 		http.Error(w, "master playlist not available", http.StatusInternalServerError)
+	case errors.Is(err, errPlaylistNotRunning):
+		// Not a timeout: every process ended before its init. The body is
+		// the variant's for the same case.
+		log.WithError(err).WithFields(log.Fields{
+			"sessionID": sess.id,
+			"attempts":  passthroughMasterAttempts,
+		}).Error("session: passthrough master: the run ended before its init")
+		http.Error(w, "playlist timeout", http.StatusGatewayTimeout)
 	default:
 		log.WithError(err).WithField("sessionID", sess.id).Error("session: passthrough master timeout")
 		http.Error(w, "playlist timeout", http.StatusGatewayTimeout)

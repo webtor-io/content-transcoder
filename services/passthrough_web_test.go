@@ -327,3 +327,56 @@ func TestPassthroughWeb_MasterStartsTheRun(t *testing.T) {
 		t.Errorf("unbuildable master: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// A process that dies before its init while the master waits for it is
+// restarted once more and waited for, instead of failing the master (a
+// first run of a source that dies on its timestamps at 0 comes back
+// lenient): the master comes from the next process's init.
+func TestPassthroughWeb_MasterOutlivesADyingProcess(t *testing.T) {
+	// The first FFmpeg the session starts lives half a second and fails;
+	// the ones after it run.
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count")
+	script := "#!/bin/sh\nn=$(cat " + count + " 2>/dev/null || echo 0)\necho $((n+1)) > " + count +
+		"\nif [ \"$n\" = 0 ]; then sleep 0.5; exit 1; fi\nexec sleep 60\n"
+	if err := os.WriteFile(filepath.Join(dir, "ffmpeg"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	standInPassthroughParams(t)
+	orig := passthroughMasterTimeout
+	passthroughMasterTimeout = 5 * time.Second
+	t.Cleanup(func() { passthroughMasterTimeout = orig })
+	f := sdrMain10()
+	web, sm := passthroughWeb(t, 1920, 1080, &f)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH")) // over passthroughWeb's fake
+	if w := postSession(web, "hevc10"); w.Code != 200 {
+		t.Fatalf("POST: %d %s", w.Code, w.Body.String())
+	}
+	var sess *Session
+	sm.mu.Lock()
+	for _, s := range sm.sessions {
+		sess = s
+	}
+	sm.mu.Unlock()
+	first := sess.currentRun().Generation()
+	// The init appears for a process after the first.
+	go func() {
+		for i := 0; i < 100; i++ {
+			time.Sleep(50 * time.Millisecond)
+			if run := sess.currentRun(); run != nil {
+				if gen, running := run.processState(); running && gen != first {
+					passthroughRunDir(t, run.OutputDir(), "v0-1080", gen, fixtureInit(t, "main10-init.mp4"), 1000)
+					return
+				}
+			}
+		}
+	}()
+	w := get(web, sess, "index.m3u8")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `CODECS="hvc1.2.4.L63.90,mp4a.40.2"`) {
+		t.Fatalf("master: %d %s", w.Code, w.Body.String())
+	}
+	if b, _ := os.ReadFile(count); strings.TrimSpace(string(b)) != "2" {
+		t.Errorf("FFmpeg started %s times, want 2", b)
+	}
+}

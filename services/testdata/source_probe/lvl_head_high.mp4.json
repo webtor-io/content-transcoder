@@ -102,7 +102,7 @@
             "nb_frames": "50",
             "nb_read_frames": "1",
             "nb_read_packets": "2",
-            "extradata": "\nAQFgAAAAkAAAAAAAHvAA/P34+AAADwOgAAEAGEABDAH//wFgAAADAJAAAAMAAAMAHroCQKEAAQAqQgEB\nAWAAAAMAkAAAAwAAAwAeoBAgUfLlukpMLwFoCAAAAwAIAAADAMhAogABAAZEAcBzwIk=\n",
+            "extradata": "\nAQFgAAAAkAAAAAAAmfAA/P34+AAADwOgAAEAGEABDAH//wFgAAADAJAAAAMAAAMAHroCQKEAAQAqQgEB\nAWAAAAMAkAAAAwAAAwAeoBAgUfLlukpMLwFoCAAAAwAIAAADAMhAogABAAZEAcBzwIk=\n",
             "extradata_size": 110,
             "disposition": {
                 "default": 1,
@@ -128,21 +128,7 @@
             "tags": {
                 "language": "und",
                 "handler_name": "VideoHandler"
-            },
-            "side_data_list": [
-                {
-                    "side_data_type": "DOVI configuration record",
-                    "dv_version_major": 1,
-                    "dv_version_minor": 0,
-                    "dv_profile": 5,
-                    "dv_level": 6,
-                    "rpu_present_flag": 1,
-                    "el_present_flag": 0,
-                    "bl_present_flag": 1,
-                    "dv_bl_signal_compatibility_id": 0,
-                    "dv_md_compression": "none"
-                }
-            ]
+            }
         }
     ]
 }

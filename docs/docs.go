@@ -37,6 +37,12 @@ const docTemplate = `{
                         "description": "Source media URL (takes priority over query param)",
                         "name": "X-Source-Url",
                         "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "What the client decodes, comma-separated tokens: hevc8, hevc10, hevc8-2160, hevc10-2160, hevc-high, hdr-pq; or unknown",
+                        "name": "decode",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -53,13 +59,19 @@ const docTemplate = `{
                         }
                     },
                     "415": {
-                        "description": "Source cannot be transcoded (resolution over 1080p or transcoding disabled)",
+                        "description": "Source cannot be transcoded (resolution over 1080p or transcoding disabled); reason in X-Video-Route-Reason",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "500": {
                         "description": "Internal error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "503": {
+                        "description": "The source could not be checked (source check failed); retry, see Retry-After",
                         "schema": {
                             "type": "string"
                         }
@@ -107,7 +119,7 @@ const docTemplate = `{
         },
         "/session/{sessionId}/seek": {
             "get": {
-                "description": "Returns the current quantized seek position of the session",
+                "description": "Returns the movie time this session's media time 0 maps to",
                 "produces": [
                     "application/json"
                 ],
@@ -201,7 +213,7 @@ const docTemplate = `{
         },
         "/session/{sessionId}/{segment}": {
             "get": {
-                "description": "Returns a .ts or .vtt segment. Waits for file to appear if FFmpeg hasn't produced it yet. Auto-restarts FFmpeg if it was stopped.",
+                "description": "Returns a .ts or .vtt segment (a passthrough session: .m4s segments and \u003cstream\u003e-init-\u003cgeneration\u003e.mp4 init segments, video/mp4). Waits for file to appear if FFmpeg hasn't produced it yet. Auto-restarts FFmpeg if it was stopped.",
                 "produces": [
                     "video/mp2t"
                 ],
@@ -304,6 +316,14 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "id": {
+                    "type": "string"
+                },
+                "route_reason": {
+                    "description": "RouteReason is why, one of a closed set (services/route.go): ok for\npassthrough; no_declaration, passthrough_off, not_hevc, needs_2160,\nneeds_pq and the like for the old route.",
+                    "type": "string"
+                },
+                "video_route": {
+                    "description": "VideoRoute is what the session does with the video: passthrough,\ncopy, reencode, or audio for a source without one.",
                     "type": "string"
                 }
             }

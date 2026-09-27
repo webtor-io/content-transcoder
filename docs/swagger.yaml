@@ -6,6 +6,17 @@ definitions:
         type: number
       id:
         type: string
+      route_reason:
+        description: |-
+          RouteReason is why, one of a closed set (services/route.go): ok for
+          passthrough; no_declaration, passthrough_off, not_hevc, needs_2160,
+          needs_pq and the like for the old route.
+        type: string
+      video_route:
+        description: |-
+          VideoRoute is what the session does with the video: passthrough,
+          copy, reencode, or audio for a source without one.
+        type: string
     type: object
 host: localhost:8080
 info:
@@ -29,6 +40,11 @@ paths:
         in: header
         name: X-Source-Url
         type: string
+      - description: 'What the client decodes, comma-separated tokens: hevc8, hevc10,
+          hevc8-2160, hevc10-2160, hevc-high, hdr-pq; or unknown'
+        in: query
+        name: decode
+        type: string
       produces:
       - application/json
       responses:
@@ -42,11 +58,16 @@ paths:
             type: string
         "415":
           description: Source cannot be transcoded (resolution over 1080p or transcoding
-            disabled)
+            disabled); reason in X-Video-Route-Reason
           schema:
             type: string
         "500":
           description: Internal error
+          schema:
+            type: string
+        "503":
+          description: The source could not be checked (source check failed); retry,
+            see Retry-After
           schema:
             type: string
       summary: Create transcoding session
@@ -79,8 +100,10 @@ paths:
       - session
   /session/{sessionId}/{segment}:
     get:
-      description: Returns a .ts or .vtt segment. Waits for file to appear if FFmpeg
-        hasn't produced it yet. Auto-restarts FFmpeg if it was stopped.
+      description: 'Returns a .ts or .vtt segment (a passthrough session: .m4s segments
+        and <stream>-init-<generation>.mp4 init segments, video/mp4). Waits for file
+        to appear if FFmpeg hasn''t produced it yet. Auto-restarts FFmpeg if it was
+        stopped.'
       parameters:
       - description: Session ID
         in: path
@@ -145,7 +168,7 @@ paths:
       - session
   /session/{sessionId}/seek:
     get:
-      description: Returns the current quantized seek position of the session
+      description: Returns the movie time this session's media time 0 maps to
       parameters:
       - description: Session ID
         in: path

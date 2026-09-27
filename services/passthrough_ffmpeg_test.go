@@ -53,6 +53,10 @@ func TestPassthrough_RealFFmpeg(t *testing.T) {
 		// Main 8-bit with the parameter sets in-band before every keyframe
 		// (x265 repeat-headers), 2 s GOPs; 30 s, the last keyframe at 28.
 		{file: "d_repeat.mkv", decode: "hevc8", duration: 30, kfPTS: 28, realStart: 27.92, inBandPS: true},
+		// a_main10.mkv remuxed to start at 5 s (-output_ts_offset 5): in
+		// movie time everything is where it is in a_main10 -- the seek to 35
+		// lands on the keyframe at 20.02, the cues are at 21 and 26.
+		{file: "e_start5.mkv", decode: "hevc10", codecs: "hvc1.2.4.L63.90", duration: 70, kfPTS: 20.02, realStart: 19.937, subs: true, subsAfterSeek: true},
 	} {
 		t.Run(c.file, func(t *testing.T) { realPassthroughSession(t, srv.URL, c) })
 	}
@@ -200,8 +204,11 @@ func realPassthroughSession(t *testing.T, base string, c realCase) {
 		t.Fatalf("seek: %d %s, want offset %.3f", w.Code, w.Body.String(), c.realStart)
 	}
 	args := strings.Join(sess.currentRun().cmd.Args, " ")
-	if want := fmt.Sprintf("-seek_timestamp 1 -ss 30.000 -noaccurate_seek -itsoffset %.6f -i ", 30-c.realStart); !strings.Contains(args, want) {
+	if want := fmt.Sprintf(" -ss 30.000 -noaccurate_seek -itsoffset %.6f -i ", 30-c.realStart); !strings.Contains(args, want) {
 		t.Errorf("seek args lack %q: %s", want, args)
+	}
+	if !strings.Contains(args, " -ss 0 -map 0:1 ") {
+		t.Errorf("the audio output is not cut at the real start: %s", args)
 	}
 	realGet(t, web, sess, "v0-360.m3u8"+q)
 	waitCompleted(t, sess)
