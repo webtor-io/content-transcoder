@@ -22,13 +22,21 @@ type RunManager struct {
 	// realStarts remembers, per run key, the real start a run once
 	// reported (see rememberRealStart): the offset a key answers must
 	// survive the run object being reaped.
-	realStarts map[string]float64
+	realStarts map[string]rememberedStart
 	// fallbacks remembers, per source and route (fallbackKey), the FFmpeg
 	// options a failed run of it turned out to need (TranscodeRun.fallbacks),
 	// so a seek does not spend a failed run to find out again.
 	fallbacks map[string]ParamOptions
 	done        chan struct{}
 	closed     bool
+}
+
+// rememberedStart is a real start a run reported, and whether it is the
+// probe's own answer (probed) or the quantized seek the copy route fell
+// back to: only the first may cut the subtitles (TranscodeRun.realStartProbed).
+type rememberedStart struct {
+	v      float64
+	probed bool
 }
 
 type managedRun struct {
@@ -39,7 +47,7 @@ type managedRun struct {
 func NewRunManager() *RunManager {
 	m := &RunManager{
 		runs:       make(map[string]*managedRun),
-		realStarts:  make(map[string]float64),
+		realStarts:  make(map[string]rememberedStart),
 		fallbacks:   make(map[string]ParamOptions),
 		done:        make(chan struct{}),
 	}
@@ -80,20 +88,20 @@ func fallbackKey(hashDir string, h *HLS) string {
 func (m *RunManager) ResolvedStart(key string) (float64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	v, ok := m.realStarts[key]
-	return v, ok
+	s, ok := m.realStarts[key]
+	return s.v, ok
 }
 
-func (m *RunManager) rememberRealStart(key string, v float64) {
+func (m *RunManager) rememberRealStart(key string, v float64, probed bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// A cap, not an LRU: entries are 16 bytes and a pod restarts on every
 	// deploy, but an unbounded map keyed by every (hash, seek) ever played
 	// is still a leak by shape.
 	if len(m.realStarts) > 8192 {
-		m.realStarts = map[string]float64{}
+		m.realStarts = map[string]rememberedStart{}
 	}
-	m.realStarts[key] = v
+	m.realStarts[key] = rememberedStart{v: v, probed: probed}
 }
 
 func (m *RunManager) rememberFallbacks(key string, opts ParamOptions) {
@@ -117,9 +125,10 @@ func (m *RunManager) newRunLocked(key, hashDir string, seekTime float64, sourceU
 	run.onRealStart = m.rememberRealStart
 	run.onFallbacks = m.rememberFallbacks
 	run.fallbacks = m.fallbacks[fallbackKey(hashDir, h)]
-	if v, ok := m.realStarts[key]; ok {
-		run.realStart = v
+	if s, ok := m.realStarts[key]; ok {
+		run.realStart = s.v
 		run.realStartResolved = true
+		run.realStartProbed = s.probed
 	}
 	return run
 }

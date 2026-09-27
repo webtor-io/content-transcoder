@@ -171,21 +171,82 @@ func TestCopySeekRun_CountsFromTheRealStart(t *testing.T) {
 		t.Errorf("one -itsoffset: %v", joined)
 	}
 
-	failed := func(context.Context, string, string, float64) (float64, error) { return 0, errors.New("cold source") }
+	// The probe found a start after the seek point (MPEG-TS): no
+	// -itsoffset, the cut all the same.
 	after := func(_ context.Context, _ string, _ string, s float64) (float64, error) { return s + 5.021, nil }
-	for name, probe := range map[string]func(context.Context, string, string, float64) (float64, error){"probe failed": failed, "run starts after the seek": after} {
+	args = startedArgsProbed(t, seekCutHLS("h264"), 30, ParamOptions{}, after)
+	joined = strings.Join(args, " ")
+	if cut, _ := cutsIn(args); strings.Contains(joined, "-itsoffset") || !reflect.DeepEqual(cut, []string{"0:4"}) ||
+		!strings.Contains(joined, " -ss 30.000 -noaccurate_seek -i ") {
+		t.Errorf("run starts after the seek: want the input seek, no -itsoffset, the subtitle cut; got cuts %v: %v", cut, joined)
+	}
+
+	// No answer: the run's zero is not known, and the argv is the one
+	// before the cut existed -- the input seek alone.
+	failed := func(context.Context, string, string, float64) (float64, error) { return 0, errors.New("cold source") }
+	implausible := func(_ context.Context, _ string, _ string, s float64) (float64, error) { return s + 90, nil }
+	for name, probe := range map[string]func(context.Context, string, string, float64) (float64, error){"probe failed": failed, "implausible answer": implausible} {
 		args := startedArgsProbed(t, seekCutHLS("h264"), 30, ParamOptions{}, probe)
 		joined := strings.Join(args, " ")
-		cut, _ := cutsIn(args)
-		if strings.Contains(joined, "-itsoffset") || !reflect.DeepEqual(cut, []string{"0:4"}) ||
+		if cut, ss := cutsIn(args); strings.Contains(joined, "-itsoffset") || len(cut) != 0 || ss != 1 ||
 			!strings.Contains(joined, " -ss 30.000 -noaccurate_seek -i ") {
-			t.Errorf("%s: want the input seek, no -itsoffset, the subtitle cut; got cuts %v: %v", name, cut, joined)
+			t.Errorf("%s: want the input seek alone, no -itsoffset, no cut; got cuts %v: %v", name, cut, joined)
 		}
 	}
 
 	from0 := strings.Join(startedArgs(t, seekCutHLS("h264"), 0, ParamOptions{}), " ")
 	if strings.Contains(from0, "-itsoffset") || strings.Contains(from0, "-ss ") {
 		t.Errorf("from the start: no seek, no offset, no cut: %v", from0)
+	}
+}
+
+// A run re-created from the manager's memory (the reaper deletes idle runs
+// under live sessions) cuts the subtitles only where the first run's probe
+// answered: the memory keeps a fallback's offset too, and must keep that it
+// was one, or the second run of the key cuts where the first did not.
+func TestCopySeekRun_MemoryKeepsWhetherProbed(t *testing.T) {
+	fakeFFmpeg(t)
+	orig := probeRunStart
+	t.Cleanup(func() { probeRunStart = orig })
+	for _, c := range []struct {
+		name   string
+		probe  func(context.Context, string, string, float64) (float64, error)
+		cut    []string
+		offset bool
+	}{
+		{"probed", func(_ context.Context, _ string, _ string, s float64) (float64, error) { return s - 2.5, nil }, []string{"0:4"}, true},
+		{"fallback", func(context.Context, string, string, float64) (float64, error) { return 0, errors.New("cold source") }, nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			key := runKey(dir, 30)
+			m := NewRunManager()
+			defer m.CloseAll()
+			probeRunStart = c.probe
+			for i := 0; i < 2; i++ {
+				r, err := m.Acquire(dir, 30, "http://src/movie.mkv", seekCutHLS("h264"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				args := r.cmd.Args[1:]
+				joined := strings.Join(args, " ")
+				if cut, _ := cutsIn(args); !reflect.DeepEqual(cut, c.cut) || strings.Contains(joined, "-itsoffset") != c.offset {
+					t.Errorf("run %d: cuts %v (want %v), -itsoffset %v (want %v): %v", i+1, cut, c.cut, !c.offset, c.offset, joined)
+				}
+				// Reaped; the next run of the key comes from the memory
+				// and must not probe.
+				m.Release(r)
+				r.Cleanup()
+				m.mu.Lock()
+				delete(m.runs, key)
+				m.mu.Unlock()
+				probeRunStart = func(context.Context, string, string, float64) (float64, error) {
+					t.Error("a run re-created from the memory probed again")
+					return 0, errors.New("probed")
+				}
+			}
+		})
+		probeRunStart = orig
 	}
 }
 

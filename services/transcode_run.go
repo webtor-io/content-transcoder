@@ -33,7 +33,7 @@ type TranscodeRun struct {
 	// out from under 10-minute sessions, and a re-created run must report
 	// the same offset — not re-probe and, on a cold source, fall back to
 	// the quantized value, moving the playlist tag mid-session.
-	onRealStart func(key string, v float64)
+	onRealStart func(key string, v float64, probed bool)
 	// realStart is the movie time media time 0 of this run actually maps
 	// to. For a copy-mode video the input seek lands on the keyframe at or
 	// before seekTime (-noaccurate_seek; for an MKV with B-frames at or
@@ -49,7 +49,12 @@ type TranscodeRun struct {
 	// mu; written only through resolveRealStartOnce.
 	realStart         float64
 	realStartResolved bool
-	realStartOnce     sync.Once
+	// realStartProbed says realStart is the probe's answer, not the
+	// quantized seek the copy route keeps after a failed or implausible
+	// one: only then is the run's zero known, and only then may its
+	// subtitles be cut there (startLocked).
+	realStartProbed bool
+	realStartOnce   sync.Once
 	outputDir string // {hashDir}/runs/[{variant}-]seek-{seekTime}/
 	sourceURL string
 	h         *HLS
@@ -213,12 +218,14 @@ func (r *TranscodeRun) resolveRealStartOnce() {
 		if result != realStartOK && r.h.passthrough {
 			return
 		}
+		probed := result == realStartOK
 		r.mu.Lock()
 		r.realStart = k
 		r.realStartResolved = true
+		r.realStartProbed = probed
 		r.mu.Unlock()
 		if r.onRealStart != nil {
-			r.onRealStart(r.key, k)
+			r.onRealStart(r.key, k, probed)
 		}
 	})
 }
@@ -263,12 +270,20 @@ func (r *TranscodeRun) startLocked() error {
 		} else if r.isVideoCopy() {
 			// resolveRealStartOnce ran before the lock (Start); the copy
 			// route keeps even a fallback, and without any the real start
-			// is the quantized seek.
-			realStart := r.seekTime
+			// is the quantized seek. The subtitles are cut only at a zero
+			// the probe found: after a fallback the run's zero is not
+			// known, and cut at the quantized seek they lost every cue
+			// between the keyframe and it and ran early by the distance
+			// (measured 10 s on a 10 s GOP, where the argv without the cut
+			// serves them all 1.083 s early, as before the cut existed).
+			realStart, cut := r.seekTime, []string(nil)
 			if r.realStartResolved {
 				realStart = r.realStart
 			}
-			params = injectCopySeekParams(params, r.seekTime, realStart, r.h.subtitleOutputMaps())
+			if r.realStartProbed {
+				cut = r.h.subtitleOutputMaps()
+			}
+			params = injectCopySeekParams(params, r.seekTime, realStart, cut)
 		} else {
 			params = injectSeekParams(params, r.seekTime, false)
 			// The accurate seek trims only what is decoded: the outputs
@@ -801,13 +816,18 @@ func injectSeekParams(params []string, seekSec float64, videoCopy bool) []string
 // segment byte for byte the run from the start's. Keyframes every 10 s,
 // the same seek (run at 20): 21, 26, 33 s from 0, 5, 12 to 1, 6, 13.
 //
-// The video and the audio are not changed by it: realStart is the video's
-// first PTS, so its first DTS is still negative by the B-frame delay and
-// its output shifts that away as it shifted the larger one before -- the
-// same timestamps -- and so does the audio, which the demuxer's seek hands
-// over from a little before the keyframe (measured: the first AAC packet at
-// 19.925 for the keyframe at 20.000, and every video and audio segment and
-// playlist byte for byte the same with and without the offset). -ss 0 on a
+// The video is not changed by it: realStart is the video's first PTS, so
+// its first DTS is still negative by the B-frame delay and its output
+// shifts that away as it shifted the larger one before -- the same
+// timestamps. Nor is the audio where the demuxer's seek hands it over from
+// a little before the keyframe (measured: the first AAC packet at 19.925
+// for the keyframe at 20.000, every video and audio segment and playlist
+// byte for byte the same with and without the offset). Where the first
+// audio packet comes after the keyframe (audio starting later than the
+// video; no B-frames) the audio output no longer shifts to zero and counts
+// from realStart, as in the run from the start: measured, a copied track
+// starting 0.5 s after the video used to play 0.479 s early, and a run
+// landing on 0 now serves the run from the start's audio byte for byte. -ss 0 on a
 // subtitle output drops the cues that start before the zero, encoded
 // (fftools/ffmpeg_enc.c do_subtitle_out) or copied webvtt (ffmpeg_mux.c
 // of_streamcopy) alike, and shifts neither: with the offset those are the
