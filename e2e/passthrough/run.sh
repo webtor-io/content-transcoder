@@ -81,7 +81,7 @@ for step in $steps; do
     ;;
   avsync)
     ./ctl.sh up new-cap "$E2E_NEW_IMAGE" 18080 PASSTHROUGH_VIDEO_CODECS=hevc
-    python3 avsync.py "$W/avsync.json"
+    python3 avsync.py "$W/avsync.json" || fail=1
     ;;
   esac
 done

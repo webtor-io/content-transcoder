@@ -259,18 +259,19 @@ CASES = {
     "r_1080_pending": lambda: route("r_1080_pending", "main8_1080.mkv", "unknown", 200, "reencode", "declaration_pending"),
     "r_1080_nodecl": lambda: route("r_1080_nodecl", "main8_1080.mkv", None, 200, "reencode", "no_declaration"),
     "r_1080_off": lambda: route("r_1080_off", "main8_1080.mkv", FULL, 200, "reencode", "passthrough_off", base=OFF),
+    # PQ in the HEVC VUI under an MKV Colour element that leaves the
+    # transfer unspecified: ffprobe's stream level says nothing, the decoded
+    # frame says PQ. Without hdr-pq the old route; with it passthrough,
+    # labelled PQ.
     "r_pqvui_colourunspec": lambda: route("r_pqvui_colourunspec", "pqvui_colourunspec_1080.mkv", "hevc10", 200, "reencode", "needs_pq"),
+    "pt_pqvui_colourunspec": lambda: passthrough("pt_pqvui_colourunspec", "pqvui_colourunspec_1080.mkv", "hevc10,hdr-pq",
+        {"width": 1920, "height": 1080, "duration": 20.021, "probe": {"profile": "2"}},
+        video_range="PQ"),
 }
 
 # Known defects: the case states the right behaviour and fails today. XFAIL
 # does not fail the run; a pass (XPASS) does, so the entry is removed.
-XFAIL = {
-    # The route reads the transfer from ffprobe's stream fields, which take
-    # the container's colour over the bitstream's: a PQ stream in an MKV
-    # whose Colour element leaves the transfer unspecified passes as SDR,
-    # with no hdr-pq token and VIDEO-RANGE=SDR.
-    "r_pqvui_colourunspec",
-}
+XFAIL = set()
 
 if __name__ == "__main__":
     out = sys.argv[1]

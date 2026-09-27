@@ -98,6 +98,13 @@ AVA="aevalsrc='if(lt(mod(t\,1)\,0.01)\,0.8*sin(2*PI*1000*t)\,0)':s=48000:c=stere
 [ -f avsync_h264.mkv ] || $F -f lavfi -i "$AVV" -f lavfi -i "$AVA" -t 70 -map 0:v -map 1:a \
   -c:v libx264 -preset veryfast -g 240 -keyint_min 240 -sc_threshold 0 -bf 3 -c:a aac -b:a 128k avsync_h264.mkv
 
+# The same markers with AC3 audio, which every route encodes to AAC.
+[ -f avsync_hevc_ac3.mkv ] || $F -f lavfi -i "$AVV" -f lavfi -i "$AVA" -t 70 -map 0:v -map 1:a \
+  $X265 -x265-params "keyint=240:min-keyint=240:scenecut=0:bframes=4:open-gop=1:log-level=error" -c:a ac3 -b:a 192k avsync_hevc_ac3.mkv
+# The HEVC one remuxed to start at 5 s (format start_time 5): a seek must
+# land on the same movie time as on the original.
+[ -f avsync_hevc_st5.mkv ] || $F -i avsync_hevc.mkv -map 0 -c copy -output_ts_offset 5 avsync_hevc_st5.mkv
+
 # Pacing, old route: H.264 with the same 10 s GOPs, 15 min (copied).
 [ -f long_h264_gop10.mkv ] || $F -f lavfi -i "testsrc2=size=1280x720:rate=24" -f lavfi -i "sine=f=440:r=48000" -t 900 \
   -map 0:v -map 1:a -c:v libx264 -preset ultrafast -crf 32 -g 240 -keyint_min 240 -sc_threshold 0 -c:a aac -ac 2 -b:a 96k long_h264_gop10.mkv

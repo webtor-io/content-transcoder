@@ -10,6 +10,15 @@ second should land at the same media time; the difference is the A/V error
 encoder delay: every route shows about 21 ms of it, as played without an
 edit list.
 
+Passthrough is held to limits (exit status 1 past them). The video: after
+a seek within 5 ms of its movie time by the offset (the start_time 5 copy
+too, which an absolute seek put 5 s off); from the start within 100 ms --
+it shows 83 ms late there, the B-frame delay an edit-list-ignoring player
+shows on every route. A/V: within 70 ms from the start (that delay against
+the audio's priming, the same on the TS routes) and 50 ms after a seek (was
++162 ms before the audio was cut at the real start). The other routes are
+measured, not judged.
+
 Needs cte2e-new-cap (capability hevc) on 18080.
 
   python3 avsync.py <out.json>
@@ -111,8 +120,34 @@ def measure(label, src, decode, seek):
     return out
 
 
+# Limits for passthrough, ms: A/V from the start and after a seek, the
+# video against its movie time from the start and after a seek.
+AV_START_MS, AV_SEEK_MS, VIDEO_START_MS, VIDEO_SEEK_MS = 70, 50, 100, 5
+
+
+def judge(r):
+    """The failures of a passthrough measurement against the limits."""
+    bad = []
+    for run in r["runs"]:
+        start = run["when"] == "start"
+        lim = AV_START_MS if start else AV_SEEK_MS
+        if any(abs(x) > lim for x in run["av_ms"]):
+            bad.append(f"{r['label']} {run['when']}: A/V {run['av_ms']} ms past {lim}")
+        vlim = VIDEO_START_MS if start else VIDEO_SEEK_MS
+        if any(abs(x) > vlim for x in run["video_vs_offset_ms"]):
+            bad.append(f"{r['label']} {run['when']}: video {run['video_vs_offset_ms']} ms off its movie time, past {vlim}")
+    return bad
+
+
 if __name__ == "__main__":
     res = [measure("passthrough_hevc", "avsync_hevc.mkv", "hevc8", 35),
+           measure("passthrough_hevc_encoded_audio", "avsync_hevc_ac3.mkv", "hevc8", 35),
+           measure("passthrough_hevc_start5", "avsync_hevc_st5.mkv", "hevc8", 35),
            measure("reencode_hevc", "avsync_hevc.mkv", None, 35),
            measure("copy_h264", "avsync_h264.mkv", None, 35)]
     json.dump(res, open(sys.argv[1], "w"), indent=1)
+    failures = [f for r in res if r["label"].startswith("passthrough") for f in judge(r)]
+    for f in failures:
+        print("FAIL", f)
+    print("avsync:", "FAIL" if failures else "PASS")
+    sys.exit(1 if failures else 0)
