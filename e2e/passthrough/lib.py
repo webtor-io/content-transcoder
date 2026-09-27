@@ -16,6 +16,8 @@ D = os.path.dirname(os.path.abspath(__file__))
 # records); mounted as /w in the tools container.
 W = os.environ.get("E2E_WORK", os.path.join(D, "work"))
 Q = "token=T&api-key=K"
+# Container names: <prefix>-tools etc. (ctl.sh, E2E_PREFIX).
+PREFIX = os.environ.get("E2E_PREFIX", "cte2e")
 
 
 def http(method, url, headers=None, timeout=330):
@@ -238,7 +240,7 @@ def parameter_sets_in_samples(seg, length_size):
 # --- ffprobe (in the tools container) ----------------------------------------
 
 def ffprobe(path_in_w, *args):
-    cmd = ["docker", "exec", "cte2e-tools", "ffprobe", "-v", "error", *args, "-of", "json", path_in_w]
+    cmd = ["docker", "exec", PREFIX + "-tools", "ffprobe", "-v", "error", *args, "-of", "json", path_in_w]
     out = subprocess.run(cmd, capture_output=True, text=True)
     if out.returncode != 0:
         return {"error": out.stderr.strip()}

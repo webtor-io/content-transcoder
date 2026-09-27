@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Seek e2e</title>
+<style>body{background:#111;color:#ddd;font:12px monospace}video{width:320px;background:#000}</style>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.14/dist/hls.min.js"></script>
+</head>
+<body>
+<button id="go">click me first (AudioContext needs a gesture)</button>
+<pre id="log"></pre>
+<script>
+// Old-route seeks as hls.js (the version web-ui uses) plays them, on the
+// avs_gap7_* sources of gen.sh: a white frame and a click at every whole
+// second except those divisible by 7, cues at known movie times.
+//
+//   await check('http://127.0.0.1:18680', 'avs_gap7_hevc.mkv', {seek: 35, seconds: 16})
+//
+// Flashes are seen by requestVideoFrameCallback (their media time), clicks
+// through WebAudio (the element's currentTime when the click comes through:
+// tens of ms of pipeline delay), cues from the text track hls.js fills. A
+// missing marker is a second divisible by 7: where the flashes miss one is
+// where the picture is at such a second, where the clicks miss one the
+// sound. The two gaps at the same media time: sound and picture agree.
+const Q = 'token=T&api-key=K';
+const log = (...a) => { document.getElementById('log').textContent += a.join(' ') + '\n'; };
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+let ac = null;
+document.getElementById('go').onclick = async () => { ac = new AudioContext(); await ac.resume(); log('audio ready'); };
+
+function gaps(ts) {
+  const g = [];
+  for (let i = 1; i < ts.length; i++) if (ts[i] - ts[i - 1] > 1.5) g.push(+(ts[i - 1] + 1).toFixed(3));
+  return g;
+}
+
+window.check = async function (ct, src, opts = {}) {
+  const post = await fetch(`${ct}/session?${Q}&source_url=${encodeURIComponent('http://media:8000/' + src)}`, { method: 'POST' });
+  const s = JSON.parse(await post.text());
+  if (opts.seek !== undefined) await fetch(`${ct}/session/${s.id}/seek?t=${opts.seek}&${Q}`, { method: 'POST' });
+  const off = (await (await fetch(`${ct}/session/${s.id}/seek?${Q}`)).json()).offset;
+  const v = document.createElement('video');
+  v.playsInline = true; v.width = 320;
+  document.body.appendChild(v);
+  const hls = new Hls({ enableWebVTT: true, renderTextTracksNatively: true });
+  hls.loadSource(`${ct}/session/${s.id}/index.m3u8?${Q}`);
+  hls.attachMedia(v);
+  await new Promise(r => hls.once(Hls.Events.MANIFEST_PARSED, r));
+  if (hls.subtitleTracks.length) { hls.subtitleTrack = 0; hls.subtitleDisplay = true; }
+  v.muted = false;
+  const node = ac.createMediaElementSource(v);
+  const proc = ac.createScriptProcessor(256, 1, 1);
+  const clicks = [], flashes = [];
+  let loud = false;
+  proc.onaudioprocess = (e) => {
+    const d = e.inputBuffer.getChannelData(0);
+    let m = 0;
+    for (let i = 0; i < d.length; i++) m = Math.max(m, Math.abs(d[i]));
+    if (m > 0.2 && !loud) clicks.push(+v.currentTime.toFixed(3));
+    loud = m > 0.05;
+  };
+  // The element's sound goes into the graph only (the processor writes
+  // silence): nothing is heard.
+  node.connect(proc); proc.connect(ac.destination);
+  const c = document.createElement('canvas'); c.width = c.height = 8;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  const onFrame = (now, meta) => {
+    g.drawImage(v, 0, 0, 8, 8);
+    const px = g.getImageData(0, 0, 8, 8).data;
+    let y = 0; for (let i = 0; i < px.length; i += 4) y += px[i];
+    if (y / 64 > 128) flashes.push(+meta.mediaTime.toFixed(3));
+    v.requestVideoFrameCallback(onFrame);
+  };
+  v.requestVideoFrameCallback(onFrame);
+  await v.play();
+  await sleep((opts.seconds || 16) * 1000);
+  const cues = [];
+  for (const tt of v.textTracks) if (tt.cues) for (const q of tt.cues) cues.push([+q.startTime.toFixed(3), q.text]);
+  const duration = v.duration;
+  hls.destroy(); proc.disconnect(); v.remove();
+  await fetch(`${ct}/session/${s.id}?${Q}`, { method: 'DELETE' });
+  // A/V: each click against the flash nearest to it (sub-second only; a
+  // whole-second error shows in the gaps).
+  const av = clicks.map(k => { let best = null; for (const f of flashes) if (best === null || Math.abs(k - f) < Math.abs(k - best)) best = f; return best === null ? null : +(k - best).toFixed(3); }).filter(x => x !== null && Math.abs(x) < 0.5);
+  av.sort((a, b) => a - b);
+  const vg = gaps(flashes), ag = gaps(clicks);
+  const res = {
+    src, seek: opts.seek, offset: off, duration: +duration.toFixed(3),
+    video_gaps_media: vg, video_gaps_movie_by_offset: vg.map(x => +(x + off).toFixed(3)),
+    audio_gaps_media: ag, audio_gaps_movie_by_offset: ag.map(x => +(x + off).toFixed(3)),
+    av_median_s: av.length ? av[Math.floor(av.length / 2)] : null,
+    cues: cues.map(([t, text]) => { const n = +(text.match(/(\d+)/) || [0, NaN])[1]; return { start: t, text, vs_offset_s: +(t + off - n).toFixed(3) }; }),
+    flashes: flashes.length, clicks: clicks.length,
+  };
+  log(JSON.stringify(res));
+  return res;
+};
+log('ready', navigator.userAgent);
+</script>
+</body>
+</html>

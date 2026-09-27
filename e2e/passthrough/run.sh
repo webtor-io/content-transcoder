@@ -13,8 +13,9 @@
 #   golden   the old route: production image against the new one with no
 #            passthrough (capability empty; no, unknown or garbage decode;
 #            declarations the route turns down), byte for byte: calls,
-#            answers, playlists, segments, legacy GET, metric families; and
-#            a negative control with passthrough on, which must differ
+#            answers, playlists, segments, legacy GET, metric families --
+#            but for the seek fixes, which ../seek/golden_expect.py checks;
+#            and a negative control with passthrough on, which must differ
 #   pacing   where a passthrough run freezes against a viewer (media time),
 #            and the old copy route on the production image for comparison
 #   avsync   A/V and timeline error per route, from the start and after a
@@ -36,13 +37,16 @@ export E2E_WORK=${E2E_WORK:-$D/work}
 W=$E2E_WORK
 export E2E_NEW_IMAGE=${E2E_NEW_IMAGE:-ct-e2e:local}
 export E2E_OLD_IMAGE=${E2E_OLD_IMAGE:-ghcr.io/webtor-io/content-transcoder:sha-1b25e28}
+# Container and network names (ctl.sh): <prefix>-tools etc.
+export E2E_PREFIX=${E2E_PREFIX:-cte2e}
+P=$E2E_PREFIX
 cd "$D"
 mkdir -p "$W/golden" "$W/pacing"
 
 if [ "${E2E_BUILD:-1}" = 1 ]; then docker build -q -t "$E2E_NEW_IMAGE" "$D/../.." >/dev/null; fi
 ./ctl.sh tools
 ./ctl.sh media
-docker exec cte2e-tools sh /e2e/gen.sh >/dev/null
+docker exec "$P-tools" sh /e2e/gen.sh >/dev/null
 [ -f "$W/media/dv5_1080.mp4" ] || python3 craft.py "$W/media/hevc10_1080_plain.mp4" "$W/media/dv5_1080.mp4" 5 6 0
 [ -f "$W/media/dv5_2160.mp4" ] || python3 craft.py "$W/media/hevc10_2160_plain.mp4" "$W/media/dv5_2160.mp4" 5 9 0
 
@@ -60,12 +64,15 @@ for step in $steps; do
     for s in old old_decl off_nodecl off_full cap_nodecl cap_unknown cap_garbage cap_short cap_full; do
       python3 golden.py record $s "$W/golden/$s.json" > "$W/golden/$s.log"
     done
-    for s in old_decl off_nodecl off_full cap_nodecl cap_unknown cap_garbage; do
-      python3 golden.py compare "$W/golden/old.json" "$W/golden/$s.json" || fail=1
+    python3 golden.py compare "$W/golden/old.json" "$W/golden/old_decl.json" || fail=1
+    # The new image differs from production where the seek fixes mean it to
+    # (../seek/golden_expect.py checks those and compares the rest).
+    for s in off_nodecl off_full cap_nodecl cap_unknown cap_garbage; do
+      python3 ../seek/golden_expect.py "$W/golden/old.json" "$W/golden/$s.json" || fail=1
     done
     # Declarations turned down after the transcoder's own look: the same
     # old route, plus that look.
-    python3 golden.py compare "$W/golden/old.json" "$W/golden/cap_short.json" --drop-source-probe || fail=1
+    python3 ../seek/golden_expect.py "$W/golden/old.json" "$W/golden/cap_short.json" --drop-source-probe || fail=1
     # Negative control: passthrough on must not compare equal.
     if python3 golden.py compare "$W/golden/old.json" "$W/golden/cap_full.json" > "$W/golden/cap_full.compare"; then
       echo "FAIL negative control: passthrough on compares equal to the old route"; fail=1
@@ -75,9 +82,9 @@ for step in $steps; do
     ;;
   pacing)
     ./ctl.sh up new-cap "$E2E_NEW_IMAGE" 18080 PASSTHROUGH_VIDEO_CODECS=hevc
-    python3 pacing.py slow/2048/long_gop10.mkv hevc8 cte2e-new-cap 18080 "$W/pacing/passthrough.json" || fail=1
+    python3 pacing.py slow/2048/long_gop10.mkv hevc8 "$P-new-cap" 18080 "$W/pacing/passthrough.json" || fail=1
     ./ctl.sh up old "$E2E_OLD_IMAGE" 18280
-    python3 pacing.py slow/8192/long_h264_gop10.mkv - cte2e-old 18280 "$W/pacing/old_copy.json"
+    python3 pacing.py slow/8192/long_h264_gop10.mkv - "$P-old" 18280 "$W/pacing/old_copy.json"
     ;;
   avsync)
     ./ctl.sh up new-cap "$E2E_NEW_IMAGE" 18080 PASSTHROUGH_VIDEO_CODECS=hevc

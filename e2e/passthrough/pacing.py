@@ -60,7 +60,7 @@ def main(src, decode, container, port, out):
     m = parse_master(mb.decode())
     vname = strip_q(m["variants"][0]["URI"])
     aname = strip_q([x for x in m["media"] if x["TYPE"] == "AUDIO"][0]["URI"])
-    runs = glob.glob(os.path.join(W, "runs", container.replace("cte2e-", ""), "data", "*", "runs", "*seek-0.000"))
+    runs = glob.glob(os.path.join(W, "runs", container[len(PREFIX) + 1:], "data", "*", "runs", "*seek-0.000"))
     run_dir = max(runs, key=os.path.getmtime)
     series = []
     t0 = time.time()

@@ -19,7 +19,7 @@ the audio's priming, the same on the TS routes) and 50 ms after a seek (was
 +162 ms before the audio was cut at the real start). The other routes are
 measured, not judged.
 
-Needs cte2e-new-cap (capability hevc) on 18080.
+Needs <prefix>-new-cap (capability hevc) on 18080 (ctl.sh, E2E_PREFIX).
 
   python3 avsync.py <out.json>
 """
@@ -35,7 +35,7 @@ LAST = 69  # the last whole second of the 70 s sources
 
 
 def tool(args):
-    return subprocess.run(["docker", "exec", "cte2e-tools", *args], capture_output=True, text=True)
+    return subprocess.run(["docker", "exec", PREFIX + "-tools", *args], capture_output=True, text=True)
 
 
 def flashes(path, mp4):
