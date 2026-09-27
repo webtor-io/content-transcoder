@@ -17,7 +17,12 @@ cue times, which hls.js places the same way without X-TIMESTAMP-MAP):
   cue/offset     cue start + SESSION-OFFSET - the cue's movie time, the
                  cue as served (what subtitle-translate stores)
   first frame    SESSION-OFFSET - the movie time of the run's first video
-                 frame (found in the source by its decoded MD5)
+                 frame (found in the source by its decoded MD5; frame n is
+                 n/24 s from the video's start, which is the video stream's
+                 start_time minus the format's into the file: 21 ms in a TS
+                 whose AAC has priming). error_vs_run0_ms is the same
+                 without that start: what the run from the start plays the
+                 frame at in hls.js, informational
 
 Limits (exit status 1 past them), after the seek:
   every A/V case  audio and video playlists within 0.3 s of each other
@@ -33,7 +38,11 @@ Limits (exit status 1 past them), after the seek:
                   its movie time by the offset, none from before the seek
                   point, the cues at 33, 41 and 61 s there
   copy            |first frame| <= 5 ms; |video/offset| <= 5 ms;
-                  |A/V| <= 50 ms
+                  |A/V| <= 50 ms; every cue within 1 ms of its movie time by
+                  the offset, none from before the offset, and every one
+                  after it but the file's last; a run that lands on the
+                  file's first frame (offset 0) serves the run from the
+                  start's subtitle playlist and segments
   from the start  |A/V| <= 70 ms and cues within 0.1 s, on both routes
 
   python3 seek.py <base url> <out.json> [case ...]
@@ -52,7 +61,10 @@ LAST = 69  # the last whole second of the 70 s sources
 SEEK = 35  # quantized to 30
 RUN_AT = 30
 AV_SEEK_MS, AV_SEEK_COPIED_AAC_MS, AV_SEEK_VS_START_MS, AV_START_MS = 50, 90, 30, 70
-TOTAL_S, CUE_S, FIRST_MS, VIDEO_COPY_MS = 0.3, 0.1, 5, 5
+TOTAL_S, CUE_S, FIRST_MS, VIDEO_COPY_MS, CUE_COPY_S = 0.3, 0.1, 5, 5, 0.001
+# The cues of edge.srt by movie second; the last one (68) is lost to
+# -fix_sub_duration on every route and not asked for.
+ALL_CUES = [1, 21, 26, 28, 33, 41, 61]
 
 
 def tool(args):
@@ -130,10 +142,18 @@ def seek(base, sid, at=SEEK):
     return st, json.loads(b.decode()) if st == 200 else b.decode()
 
 
+def fetch_dir(base, label):
+    """Per image (port) as well: two images measured side by side must not
+    read each other's files."""
+    d = os.path.join(W, "fetch", label + "_" + base.rsplit(":", 1)[1])
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def av(base, label, src, subs=False):
     """A/V, video against the offset, cues against the offset; from the
     start and after the seek."""
-    odir = os.path.join(W, "fetch", label)
+    odir = fetch_dir(base, label)
     os.makedirs(odir, exist_ok=True)
     j, names = open_session(base, src)
     sid = j["id"]
@@ -162,6 +182,7 @@ def av(base, label, src, subs=False):
         if subs:
             sp, cues = served_cues(base, sid, names["subtitles"])
             r["subtitle_offset"] = sp["offset"]
+            r["subtitle_files"] = subtitle_files(base, sid, names["subtitles"])
             r["cues"] = [dict(c, vs_offset_s=round(c["start"] + sp["offset"] - c["movie"], 3)) for c in cues]
         out["runs"].append(r)
         print(label, when, json.dumps({k: v for k, v in r.items() if k != "cues"}), flush=True)
@@ -171,7 +192,24 @@ def av(base, label, src, subs=False):
     return out
 
 
+def subtitle_files(base, sid, name):
+    """The subtitle playlist's segment lines and every segment's body."""
+    text, _ = wait_complete(base, sid, name, timeout=300)
+    p = parse_media(text)
+    return [[strip_q(u), d] for u, d in p["segments"]] + [get(base, sid, u, None)[2].decode() for u, _ in p["segments"]]
+
+
 _md5_index = {}
+_video_start = {}
+
+
+def video_start(src):
+    """How far into the file the video starts: its start_time minus the
+    format's."""
+    if src not in _video_start:
+        j = ffprobe(f"/w/media/{src}", "-select_streams", "v:0", "-show_entries", "format=start_time:stream=start_time")
+        _video_start[src] = float(j["streams"][0]["start_time"]) - float(j["format"]["start_time"])
+    return _video_start[src]
 
 
 def md5_index(src):
@@ -186,8 +224,7 @@ def md5_index(src):
 
 def first_frame(base, label, src, at):
     """The copy route's offset against the run's first video frame."""
-    odir = os.path.join(W, "fetch", label)
-    os.makedirs(odir, exist_ok=True)
+    odir = fetch_dir(base, label)
     j, names = open_session(base, src)
     sid = j["id"]
     st, ans = seek(base, sid, at)
@@ -207,11 +244,31 @@ def first_frame(base, label, src, at):
     n = md5_index(src).get(h)
     pts = first_pts(seg, "v:0")
     http("DELETE", f"{base}/session/{sid}")
-    movie = n / 24 if n is not None else None
+    movie = n / 24 + video_start(src) if n is not None else None
     r = {"label": label, "source": src, "seek": at, "seek_answer": ans, "offset": p["offset"],
          "first_frame_movie": movie, "first_frame_pts": pts,
-         "error_ms": round((p["offset"] - movie) * 1000, 1) if movie is not None else None}
+         "error_ms": round((p["offset"] - movie) * 1000, 1) if movie is not None else None,
+         "error_vs_run0_ms": round((p["offset"] - n / 24) * 1000, 1) if n is not None else None}
     print(label, json.dumps(r), flush=True)
+    return r
+
+
+def copy_cues(base, label, src, at=SEEK):
+    """Copy route: the cues a seek run serves against the offset, and those
+    of the run from the start."""
+    j, names = open_session(base, src)
+    sid = j["id"]
+    r = {"label": label, "source": src, "route": j.get("video_route", "?"), "copy_cues": True}
+    _, from0 = served_cues(base, sid, names["subtitles"])
+    r["from0_files"] = subtitle_files(base, sid, names["subtitles"])
+    r["from0_cues"] = [dict(c, vs_offset_s=round(c["start"] - c["movie"], 3)) for c in from0]
+    r["seek_status"], r["seek_answer"] = seek(base, sid, at)
+    sp, cues = served_cues(base, sid, names["subtitles"])
+    r["offset"] = sp["offset"]
+    r["files"] = subtitle_files(base, sid, names["subtitles"])
+    r["cues"] = [dict(c, vs_offset_s=round(c["start"] + sp["offset"] - c["movie"], 3)) for c in cues]
+    http("DELETE", f"{base}/session/{sid}")
+    print(label, "offset", r["offset"], "cues", [(c["movie"], c["start"], c["vs_offset_s"]) for c in r["cues"]], flush=True)
     return r
 
 
@@ -221,7 +278,7 @@ CASES = {
     "reencode_subs_ass": lambda b: av(b, "reencode_subs_ass", "avs_hevc_ass.mkv", subs=True),
     "reencode_subs_webvtt": lambda b: av(b, "reencode_subs_webvtt", "avs_hevc_webvtt.mkv", subs=True),
     "reencode_subs_movtext": lambda b: av(b, "reencode_subs_movtext", "avs_hevc_movtext.mp4", subs=True),
-    "copy_av": lambda b: av(b, "copy_av", "avs_h264.mkv"),
+    "copy_av": lambda b: av(b, "copy_av", "avs_h264.mkv", subs=True),
     "copy_kf10_bf3": lambda b: first_frame(b, "copy_kf10_bf3", "kf10_bf3.mkv", 35),
     "copy_kfwin_30": lambda b: first_frame(b, "copy_kfwin_30", "kfwin.mkv", 35),
     "copy_kfwin_60": lambda b: first_frame(b, "copy_kfwin_60", "kfwin.mkv", 65),
@@ -229,15 +286,39 @@ CASES = {
     "copy_start5": lambda b: first_frame(b, "copy_start5", "kf10_bf3_st5.mkv", 35),
     "copy_no_bframes": lambda b: first_frame(b, "copy_no_bframes", "kf10_bf0.mkv", 35),
     "copy_first_keyframe": lambda b: first_frame(b, "copy_first_keyframe", "kf0_30.mkv", 35),
+    # MPEG-TS: FFmpeg's seek lands on the keyframe after the seek point.
+    "copy_ts_after_seek": lambda b: first_frame(b, "copy_ts_after_seek", "kf5.ts", 35),
+    "copy_ts_after_seek_60": lambda b: first_frame(b, "copy_ts_after_seek_60", "kf5.ts", 65),
+    # Embedded cues on the copy route: a run at 20, and one on the first frame.
+    "copy_cues": lambda b: copy_cues(b, "copy_cues", "kf10_bf3.mkv"),
+    "copy_cues_first_keyframe": lambda b: copy_cues(b, "copy_cues_first_keyframe", "kf0_30_subs.mkv"),
 }
 # Cues a seek to 35 must bring, by movie time; the last one of the file (68)
 # is lost to -fix_sub_duration on every route and not asked for.
 WANT_CUES_AFTER_SEEK = {33, 41, 61}
 
 
+def judge_copy_cues(lab, when, cues, offset, bad):
+    off = [(c["movie"], c["vs_offset_s"]) for c in cues if abs(c["vs_offset_s"]) > CUE_COPY_S]
+    if off:
+        bad.append(f"{lab} {when}: cues off their movie time by the offset (movie, error s): {off}")
+    early = [c["movie"] for c in cues if c["movie"] < offset]
+    if early:
+        bad.append(f"{lab} {when}: cues from before the offset {offset} served: {early}")
+    missing = {m for m in ALL_CUES if m >= offset} - {c["movie"] for c in cues}
+    if missing:
+        bad.append(f"{lab} {when}: cues missing: {sorted(missing)}")
+
+
 def judge(r):
     bad = []
     lab = r["label"]
+    if r.get("copy_cues"):
+        judge_copy_cues(lab, "from the start", r["from0_cues"], 0, bad)
+        judge_copy_cues(lab, "seek", r["cues"], r["offset"], bad)
+        if r["offset"] == 0 and r["files"] != r["from0_files"]:
+            bad.append(f"{lab} seek: offset 0, but the subtitle playlist and segments are not the run from the start's")
+        return bad
     if "runs" in r:
         reenc = lab.startswith("reencode")
         start_av = r["runs"][0]["av_ms"]
@@ -256,7 +337,9 @@ def judge(r):
                 bad.append(f"{lab} seek: audio playlist {run['audio_total']} s against the video's {run['video_total']} s")
             if seek_ and not reenc and any(abs(x) > VIDEO_COPY_MS for x in run["video_vs_offset_ms"]):
                 bad.append(f"{lab} seek: video {run['video_vs_offset_ms']} ms off its movie time by the offset")
-            if "cues" in run:
+            if "cues" in run and not reenc and seek_:
+                judge_copy_cues(lab, "seek", run["cues"], run["offset"], bad)
+            elif "cues" in run:
                 off_cues = [(c["movie"], c["vs_offset_s"]) for c in run["cues"] if abs(c["vs_offset_s"]) > CUE_S]
                 if off_cues:
                     bad.append(f"{lab} {run['when']}: cues off their movie time by the offset (movie, error s): {off_cues}")

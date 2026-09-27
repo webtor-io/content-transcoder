@@ -77,7 +77,7 @@ G7A="aevalsrc='if(lt(mod(t\,1)\,0.01)*gt(mod(floor(t)\,7)\,0)\,0.8*sin(2*PI*1000
 # said): keyframes every 10 s; the same without B-frames; keyframes only at
 # 0 10 20 29.917 40 50 59.833 70 80 89.875 (inside FFmpeg's 3/23 s before
 # 30 and 90, outside it before 60); the first remuxed to start at 5 s;
-# keyframes only at 0 and 30.
+# keyframes only at 0 and 30; an MPEG-TS and an AVI.
 V="testsrc2=size=640x360:rate=24"
 H264="-c:v libx264 -preset veryfast -sc_threshold 0"
 [ -f kf10_bf3.mkv ] || $F -f lavfi -i "$V" -f lavfi -i "$AVA" -i edge.srt -t 95 -map 0:v -map 1:a -map 2:s \
@@ -90,4 +90,15 @@ H264="-c:v libx264 -preset veryfast -sc_threshold 0"
 [ -f kf10_bf3_st5.mkv ] || $F -i kf10_bf3.mkv -map 0 -c copy -output_ts_offset 5 kf10_bf3_st5.mkv
 [ -f kf0_30.mkv ] || $F -f lavfi -i "$V" -f lavfi -i "$AVA" -t 95 -map 0:v -map 1:a $H264 -g 100000 -keyint_min 100000 -bf 3 \
   -force_key_frames "expr:eq(n,0)+eq(n,720)" -c:a aac -b:a 96k kf0_30.mkv
+# The same with the cues: a copy seek to 30 lands on the file's first frame.
+[ -f kf0_30_subs.mkv ] || $F -i kf0_30.mkv -i edge.srt -map 0 -map 1 -c copy -c:s srt kf0_30_subs.mkv
+# MPEG-TS (no index), keyframes at 0 5 15 25 35 ...: FFmpeg's seek lands on
+# the keyframe after the seek point (35.021 for 30: the video starts 21 ms
+# into the file, after the AAC's priming).
+[ -f kf5.ts ] || $F -f lavfi -i "$V" -f lavfi -i "$AVA" -t 95 -map 0:v -map 1:a $H264 -g 100000 -keyint_min 100000 -bf 3 \
+  -force_key_frames "expr:eq(n,0)+eq(mod(n+120,240),0)" -c:a aac -b:a 96k kf5.ts
+# AVI, time base 1001/24000, keyframes at 0 and 70.9 s: a seek to 60 reaches
+# the first frame rounded to -1439 ticks (the probe's clamp).
+[ -f avi_tick.avi ] || $F -f lavfi -i "testsrc2=size=640x360:rate=24000/1001" -t 95 $H264 -bf 0 -g 100000 -keyint_min 100000 \
+  -force_key_frames "expr:eq(n,0)+eq(n,1700)" -an avi_tick.avi
 ls -la /w/media

@@ -10,8 +10,9 @@
 #   seek     seek.py against both images: A/V, cues and the copy route's
 #            offset after a seek (limits in seek.py); the new image must
 #            pass, the production image must fail
-#   gotest   TestCopyRoute_RealFFmpegStart (services/run_start_ffmpeg_test.go)
-#            in the production image's FFmpeg, on gen.sh's sources
+#   gotest   TestCopyRoute_RealFFmpeg* (services/run_start_ffmpeg_test.go:
+#            the offset, the cues, the probe's tick rounding) in the
+#            production image's FFmpeg, on gen.sh's sources
 #   golden   the old route's golden records (../passthrough/golden.py) of
 #            both images differ only where the fixes mean them to
 #            (golden_expect.py); needs the passthrough sources (its gen.sh)
@@ -69,7 +70,7 @@ for step in $steps; do
     arch=$(docker version --format '{{.Server.Arch}}')
     (cd "$D/../.." && GOOS=linux GOARCH=$arch CGO_ENABLED=0 go test -c -o "$W/ct.test" ./services)
     docker run --rm -v "$W:/w" -e COPY_SEEK_MEDIA=/w/media --entrypoint /w/ct.test "$E2E_OLD_IMAGE" \
-      -test.run TestCopyRoute_RealFFmpegStart -test.v > "$W/gotest.log" 2>&1 || fail=1
+      -test.run TestCopyRoute_RealFFmpeg -test.v > "$W/gotest.log" 2>&1 || fail=1
     grep -E '^(--- |    --- )' "$W/gotest.log"
     ;;
   golden)
