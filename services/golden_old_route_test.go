@@ -20,7 +20,13 @@ package services
 //     hevc-800-ac3-dvdsub: 0:2, the AAC one, not the encoded AC3);
 //   - and each subtitle output there: "-ss", "0" before its "-map"
 //     (hevc-800-ac3-dvdsub: 0:4, the subrip track; the dvd_subtitle one has
-//     no output).
+//     no output);
+//   - a copy-route seek run counts its outputs from where FFmpeg's seek
+//     lands: "-itsoffset", "2.500000" after "-noaccurate_seek" (the record's
+//     probe answers 2.5 s before the seek; h264-1080-aac and
+//     h264-2160-eac3-subs), and "-ss", "0" before the "-map" of each
+//     subtitle output (h264-2160-eac3-subs: 0:2 subrip and 0:4 ass; the PGS
+//     track has no output).
 
 import (
 	"context"

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -26,12 +27,19 @@ func seekCutHLS(videoCodec string) *HLS {
 }
 
 // startedArgs starts a run of h at seek with the given options against the
-// fake FFmpeg and returns its arguments (without the program).
+// fake FFmpeg, the copy route's probe answering 2.5 s before the seek, and
+// returns its arguments (without the program).
 func startedArgs(t *testing.T, h *HLS, seek float64, opts ParamOptions) []string {
+	t.Helper()
+	return startedArgsProbed(t, h, seek, opts, func(_ context.Context, _ string, _ string, s float64) (float64, error) { return s - 2.5, nil })
+}
+
+// startedArgsProbed is startedArgs with the copy route's probe given.
+func startedArgsProbed(t *testing.T, h *HLS, seek float64, opts ParamOptions, probe func(context.Context, string, string, float64) (float64, error)) []string {
 	t.Helper()
 	fakeFFmpeg(t)
 	orig := probeRunStart
-	probeRunStart = func(_ context.Context, _ string, _ string, s float64) (float64, error) { return s - 2.5, nil }
+	probeRunStart = probe
 	t.Cleanup(func() { probeRunStart = orig })
 	r := newTranscodeRun("k", t.TempDir(), seek, "http://src/movie.mkv", h)
 	r.fallbacks = opts
@@ -98,10 +106,11 @@ func TestCutAtOutputStart(t *testing.T) {
 
 // A seek run of a re-encoded video puts -ss 0 before the -map of the copied
 // audio track and of the subtitle output and nowhere else; a run from the
-// start and a copy-route seek get no cut at all, a source whose audio is
-// encoded only the subtitles'. Negative control: with the cut out of
-// startLocked the first case fails (no cut), and with the subtitles out of
-// reencodeSeekCuts the subtitle case does.
+// start gets no cut at all, a source whose audio is encoded only the
+// subtitles' (the copy route: TestCopySeekRun_CountsFromTheRealStart).
+// Negative control: with the cut out of startLocked the first case fails
+// (no cut), and with the subtitles out of reencodeSeekCuts the subtitle
+// case does.
 func TestReencodeSeekRun_CutsCopiedAudioAndSubtitlesAtTheSeek(t *testing.T) {
 	args := startedArgs(t, seekCutHLS("hevc"), 30, ParamOptions{})
 	cut, ss := cutsIn(args)
@@ -125,10 +134,6 @@ func TestReencodeSeekRun_CutsCopiedAudioAndSubtitlesAtTheSeek(t *testing.T) {
 	if cut, ss := cutsIn(startedArgs(t, seekCutHLS("hevc"), 0, ParamOptions{})); ss != 0 || len(cut) != 0 {
 		t.Errorf("from the start: no seek, no cut; got %d -ss, cuts %v", ss, cut)
 	}
-	copyArgs := startedArgs(t, seekCutHLS("h264"), 30, ParamOptions{})
-	if cut, ss := cutsIn(copyArgs); ss != 1 || len(cut) != 0 || !strings.Contains(strings.Join(copyArgs, " "), "-ss 30.000 -noaccurate_seek -i ") {
-		t.Errorf("copy route seek: its input seek only; got %d -ss, cuts %v: %v", ss, cut, copyArgs)
-	}
 	if cut, _ := cutsIn(startedArgs(t, seekCutHLS("hevc"), 30, ParamOptions{EncodeAudio: true})); !reflect.DeepEqual(cut, []string{"0:4"}) {
 		t.Errorf("EncodeAudio: every audio track is encoded and trimmed, only the subtitles are cut; got %v", cut)
 	}
@@ -141,4 +146,62 @@ func containsString(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// A copy-route seek run counts every output from where FFmpeg's seek lands
+// (realStart, 2.5 s before the seek here): -itsoffset <seek - realStart>
+// among the input options, and -ss 0 before the -map of each subtitle
+// output, so the cues start at the offset and none from before the keyframe
+// moves the rest; the video and the audio outputs are not cut. A probe that
+// failed (realStart the quantized seek) or a run that starts after the seek
+// point (an MPEG-TS) gets no offset, only the cut; a run from the start
+// neither. Negative control: without -itsoffset (injectCopySeekParams) or
+// without the subtitle maps passed to it (startLocked) the first case fails.
+func TestCopySeekRun_CountsFromTheRealStart(t *testing.T) {
+	args := startedArgs(t, seekCutHLS("h264"), 30, ParamOptions{})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, " -fix_sub_duration -ss 30.000 -noaccurate_seek -itsoffset 2.500000 -i http://src/movie.mkv ") {
+		t.Errorf("copy seek: want the input seek and -itsoffset 2.500000 before -i: %v", joined)
+	}
+	cut, ss := cutsIn(args)
+	if !reflect.DeepEqual(cut, []string{"0:4"}) || ss != 2 {
+		t.Errorf("copy seek: want -ss 0 before the subrip output (0:4) only, the input seek the other -ss; got cuts %v, %d -ss: %v", cut, ss, joined)
+	}
+	if strings.Count(joined, "-itsoffset") != 1 {
+		t.Errorf("one -itsoffset: %v", joined)
+	}
+
+	failed := func(context.Context, string, string, float64) (float64, error) { return 0, errors.New("cold source") }
+	after := func(_ context.Context, _ string, _ string, s float64) (float64, error) { return s + 5.021, nil }
+	for name, probe := range map[string]func(context.Context, string, string, float64) (float64, error){"probe failed": failed, "run starts after the seek": after} {
+		args := startedArgsProbed(t, seekCutHLS("h264"), 30, ParamOptions{}, probe)
+		joined := strings.Join(args, " ")
+		cut, _ := cutsIn(args)
+		if strings.Contains(joined, "-itsoffset") || !reflect.DeepEqual(cut, []string{"0:4"}) ||
+			!strings.Contains(joined, " -ss 30.000 -noaccurate_seek -i ") {
+			t.Errorf("%s: want the input seek, no -itsoffset, the subtitle cut; got cuts %v: %v", name, cut, joined)
+		}
+	}
+
+	from0 := strings.Join(startedArgs(t, seekCutHLS("h264"), 0, ParamOptions{}), " ")
+	if strings.Contains(from0, "-itsoffset") || strings.Contains(from0, "-ss ") {
+		t.Errorf("from the start: no seek, no offset, no cut: %v", from0)
+	}
+}
+
+func TestInjectCopySeekParams(t *testing.T) {
+	in := []string{"-fix_sub_duration", "-i", "U", "-map", "0:0", "v.ts", "-map", "0:1", "a.ts", "-map", "0:2", "s.vtt"}
+	for _, c := range []struct {
+		realStart float64
+		want      []string
+	}{
+		{20, []string{"-fix_sub_duration", "-ss", "30.000", "-noaccurate_seek", "-itsoffset", "10.000000", "-i", "U", "-map", "0:0", "v.ts", "-map", "0:1", "a.ts", "-ss", "0", "-map", "0:2", "s.vtt"}},
+		{0, []string{"-fix_sub_duration", "-ss", "30.000", "-noaccurate_seek", "-itsoffset", "30.000000", "-i", "U", "-map", "0:0", "v.ts", "-map", "0:1", "a.ts", "-ss", "0", "-map", "0:2", "s.vtt"}},
+		{30, []string{"-fix_sub_duration", "-ss", "30.000", "-noaccurate_seek", "-i", "U", "-map", "0:0", "v.ts", "-map", "0:1", "a.ts", "-ss", "0", "-map", "0:2", "s.vtt"}},
+		{35.021, []string{"-fix_sub_duration", "-ss", "30.000", "-noaccurate_seek", "-i", "U", "-map", "0:0", "v.ts", "-map", "0:1", "a.ts", "-ss", "0", "-map", "0:2", "s.vtt"}},
+	} {
+		if got := injectCopySeekParams(in, 30, c.realStart, []string{"0:2"}); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("realStart %v:\n got  %v\n want %v", c.realStart, got, c.want)
+		}
+	}
 }

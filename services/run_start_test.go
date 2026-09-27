@@ -13,13 +13,19 @@ import (
 )
 
 // fakeSeekTools puts an ffmpeg that records its arguments and writes the
-// framecrc line given, and an ffprobe that answers 30.000, first in PATH;
-// it returns the file the arguments go to.
+// framecrc line given (time base 1/1000), and an ffprobe that answers
+// 30.000, first in PATH; it returns the file the arguments go to.
 func fakeSeekTools(t *testing.T, framecrc string) string {
+	t.Helper()
+	return fakeSeekToolsTB(t, "1/1000", framecrc)
+}
+
+// fakeSeekToolsTB is fakeSeekTools with the framecrc's time base given.
+func fakeSeekToolsTB(t *testing.T, tb, framecrc string) string {
 	t.Helper()
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
-	ffmpeg := "#!/bin/sh\necho \"$@\" > " + argsFile + "\nprintf '#tb 0: 1/1000\\n" + framecrc + "\\n'\n"
+	ffmpeg := "#!/bin/sh\necho \"$@\" > " + argsFile + "\nprintf '#tb 0: " + tb + "\\n" + framecrc + "\\n'\n"
 	ffprobe := "#!/bin/sh\nprintf '30.000000,N/A\\n'\n"
 	for name, script := range map[string]string{"ffmpeg": ffmpeg, "ffprobe": ffprobe} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0755); err != nil {
@@ -54,8 +60,8 @@ func TestCopyRouteRealStartIsFFmpegsFirstFrame(t *testing.T) {
 	if !strings.Contains(string(b), strings.Join(copySeekInput(30), " ")+" -i http://src/x.mkv -map 0:0 ") {
 		t.Errorf("probe args %s", b)
 	}
-	runArgs := strings.Join(injectSeekParams([]string{"-fix_sub_duration", "-i", "http://src/x.mkv"}, 30, true), " ")
-	if runArgs != "-fix_sub_duration "+strings.Join(copySeekInput(30), " ")+" -i http://src/x.mkv" {
+	runArgs := strings.Join(injectCopySeekParams([]string{"-fix_sub_duration", "-i", "http://src/x.mkv"}, 30, 20, nil), " ")
+	if runArgs != "-fix_sub_duration "+strings.Join(copySeekInput(30), " ")+" -itsoffset 10.000000 -i http://src/x.mkv" {
 		t.Errorf("run args %s", runArgs)
 	}
 }
@@ -88,29 +94,68 @@ func TestFFmpegSeekFirstFrame(t *testing.T) {
 	}
 }
 
-// TestResolveRealStart pins the fallbacks: anything that cannot be a
-// keyframe for this seek — an error, a time after the seek point, one
-// implausibly far before it — reports the quantized seek, never breaks the
-// run.
+// The seek point reaches the packets rescaled to the stream's time base, to
+// the nearest tick: 60 s in an AVI's 1001/24000 is 1438.56 ticks, so its
+// first frame reads -1439 ticks from a seek to 60 -- movie -0.018 -- and
+// was thrown away as before the file, reporting 60 for a run that starts at
+// 0. Under zero by less than a tick is zero; by more it is left for the
+// guard (resolveRealStart). The same frame from a seek to 30 (-719 ticks)
+// is +0.004, and a seek after the first keyframe is untouched. Negative
+// control: without the clamp the first case answers -0.018.
+func TestFFmpegSeekFirstFrame_TickRounding(t *testing.T) {
+	for _, c := range []struct {
+		tb, line string
+		seek     float64
+		want     float64
+	}{
+		{"1001/24000", "0,      -1439,      -1439,        1,     7955, 0x893f3cc0", 60, 0},
+		{"1001/24000", "0,       -719,       -719,        1,     7955, 0x893f3cc0", 30, 30 - 719*1001.0/24000},
+		{"1001/24000", "0,      -1441,      -1441,        1,     7955, 0x893f3cc0", 60, 60 - 1441*1001.0/24000},
+		{"1/90000", "0,     444420,     451920,     3750,    10790, 0x43defeac", 30, 30 + 451920.0/90000},
+	} {
+		fakeSeekToolsTB(t, c.tb, c.line)
+		got, err := ffmpegSeekFirstFrame(context.Background(), "http://src/x.avi", "0", c.seek)
+		if err != nil || math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("%s %q at %v: %v %v, want %v", c.tb, c.line, c.seek, got, err, c.want)
+		}
+	}
+}
+
+// TestResolveRealStart pins the fallbacks: anything that cannot be where
+// this seek starts -- an error, a time before the file, one implausibly far
+// before the seek point or after it -- reports the quantized seek, never
+// breaks the run. A copy-route answer after the seek point is where the run
+// starts (an MPEG-TS lands on the next keyframe: 35.021 for a seek to 30);
+// passthrough keeps refusing it. Negative control: with the old guard
+// (k > seek implausible) the copy case "after the seek point" fails.
 func TestResolveRealStart(t *testing.T) {
-	orig := probeRunStart
-	t.Cleanup(func() { probeRunStart = orig })
-	run := newTranscodeRun("k", t.TempDir(), 600, "http://src", nil)
+	orig, origPT := probeRunStart, probePassthroughStart
+	t.Cleanup(func() { probeRunStart, probePassthroughStart = orig, origPT })
+	copyRun := newTranscodeRun("k", t.TempDir(), 600, "http://src", nil)
+	copyRun30 := newTranscodeRun("k", t.TempDir(), 30, "http://src", nil)
+	ptRun := newTranscodeRun("k", t.TempDir(), 600, "http://src", &HLS{passthrough: true})
 
 	for _, c := range []struct {
 		name   string
+		run    *TranscodeRun
 		k      float64
 		err    error
 		want   float64
 		result string
 	}{
-		{"keyframe", 598.343, nil, 598.343, realStartOK},
-		{"error falls back", 0, errors.New("boom"), 600, realStartFailed},
-		{"after the seek point falls back", 601, nil, 600, realStartImplausible},
-		{"implausibly early falls back", 500, nil, 600, realStartImplausible},
+		{"keyframe", copyRun, 598.343, nil, 598.343, realStartOK},
+		{"the file's first frame", copyRun30, 0, nil, 0, realStartOK},
+		{"error falls back", copyRun, 0, errors.New("boom"), 600, realStartFailed},
+		{"after the seek point", copyRun, 605.021, nil, 605.021, realStartOK},
+		{"implausibly late falls back", copyRun, 660.5, nil, 600, realStartImplausible},
+		{"implausibly early falls back", copyRun, 500, nil, 600, realStartImplausible},
+		{"before the file falls back", copyRun, -0.5, nil, 600, realStartImplausible},
+		{"passthrough: keyframe", ptRun, 598.343, nil, 598.343, realStartOK},
+		{"passthrough: after the seek point falls back", ptRun, 601, nil, 600, realStartImplausible},
 	} {
 		probeRunStart = func(context.Context, string, string, float64) (float64, error) { return c.k, c.err }
-		if got, result := run.resolveRealStart(); got != c.want || result != c.result {
+		probePassthroughStart = probeRunStart
+		if got, result := c.run.resolveRealStart(); got != c.want || result != c.result {
 			t.Errorf("%s: %v %s, want %v %s", c.name, got, result, c.want, c.result)
 		}
 	}

@@ -87,19 +87,40 @@ func ffmpegSeekStart(ctx context.Context, sourceURL string, stream string, seek 
 // 19.917, PTS 0.083 in the served TS) played at media time 0.000, and with
 // the DTS as the offset every frame was 83 ms early by it. A packet without
 // a PTS gives its DTS.
+//
+// The answer can be after the seek point: a format without an index
+// (MPEG-TS) seeks to a byte position by the timestamps it reads there, and
+// the copy drops what comes before the next keyframe (fftools/ffmpeg_mux.c
+// of_streamcopy, streamcopy_started) -- measured on 8.1.2, a seek to 30 on
+// a TS with keyframes at 25 and 35 started the run at 35.021, and the run's
+// first frame was that one (resolveRealStart takes it).
+//
+// A keyframe at the file's first frame can come back a hair below zero:
+// FFmpeg counts timestamps from the seek point by rescaling it to the
+// stream's time base, to the nearest tick (ffmpeg_demux.c ts_fixup), so
+// the answer is off by up to half a tick either way -- 60 s in an AVI's
+// 1001/24000 is 1438.56 ticks, rounded to 1439, and the first frame read
+// -0.018. An answer under zero by less than a tick is zero;
+// resolveRealStart's guard would otherwise throw it away and report the
+// seek point, 60 s after the frame the run starts at.
 func ffmpegSeekFirstFrame(ctx context.Context, sourceURL string, stream string, seek float64) (float64, error) {
 	out, err := ffmpegSeekFirstPacket(ctx, sourceURL, stream, seek)
 	if err != nil {
 		return 0, err
 	}
-	dts, pts, hasDTS, hasPTS, err := frameCRCFirst(out)
+	p, err := frameCRCFirst(out)
 	if err != nil {
 		return 0, err
 	}
-	if !hasPTS && hasDTS {
-		pts = dts
+	pts := p.pts
+	if !p.hasPTS && p.hasDTS {
+		pts = p.dts
 	}
-	return seek + pts, nil
+	k := seek + pts
+	if k < 0 && k > -p.tick {
+		k = 0
+	}
+	return k, nil
 }
 
 // ffmpegSeekFirstPacket runs FFmpeg with the runs' seek options
@@ -129,22 +150,29 @@ func ffmpegSeekFirstPacket(ctx context.Context, sourceURL string, stream string,
 // parseFrameCRCStart reads the first packet of FFmpeg's framecrc output
 // (frameCRCFirst) and returns the earlier of its dts and pts, in seconds.
 func parseFrameCRCStart(out []byte) (float64, error) {
-	dts, pts, hasDTS, hasPTS, err := frameCRCFirst(out)
+	p, err := frameCRCFirst(out)
 	if err != nil {
 		return 0, err
 	}
-	if hasDTS && (!hasPTS || dts < pts) {
-		return dts, nil
+	if p.hasDTS && (!p.hasPTS || p.dts < p.pts) {
+		return p.dts, nil
 	}
-	return pts, nil
+	return p.pts, nil
+}
+
+// frameCRCPacket is the first packet of a framecrc output: its dts and pts
+// in seconds, which of them it has (one at least), and the length of one
+// tick of its time base in seconds.
+type frameCRCPacket struct {
+	dts, pts       float64
+	hasDTS, hasPTS bool
+	tick           float64
 }
 
 // frameCRCFirst reads the first packet of FFmpeg's framecrc output:
 // "#tb 0: num/den", then "stream, dts, pts, duration, size, crc" in that
 // time base (libavformat/framecrcenc.c; a missing timestamp is INT64_MIN).
-// It returns its dts and pts in seconds and which of them it has; one of
-// them at least.
-func frameCRCFirst(out []byte) (dts, pts float64, hasDTS, hasPTS bool, err error) {
+func frameCRCFirst(out []byte) (frameCRCPacket, error) {
 	var num, den int64
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
@@ -160,25 +188,29 @@ func frameCRCFirst(out []byte) (dts, pts float64, hasDTS, hasPTS bool, err error
 			continue
 		}
 		if num <= 0 || den <= 0 {
-			return 0, 0, false, false, errors.New("framecrc without a time base")
+			return frameCRCPacket{}, errors.New("framecrc without a time base")
 		}
 		fields := strings.Split(line, ",")
 		if len(fields) < 3 {
-			return 0, 0, false, false, errors.Errorf("unexpected framecrc line %q", line)
+			return frameCRCPacket{}, errors.Errorf("unexpected framecrc line %q", line)
 		}
-		var ts [2]float64
-		var has [2]bool
+		p := frameCRCPacket{tick: float64(num) / float64(den)}
 		for k, f := range fields[1:3] {
 			v, err := strconv.ParseInt(strings.TrimSpace(f), 10, 64)
 			if err != nil || v == math.MinInt64 {
 				continue
 			}
-			ts[k], has[k] = float64(v)*float64(num)/float64(den), true
+			t := float64(v) * float64(num) / float64(den)
+			if k == 0 {
+				p.dts, p.hasDTS = t, true
+			} else {
+				p.pts, p.hasPTS = t, true
+			}
 		}
-		if !has[0] && !has[1] {
-			return 0, 0, false, false, errors.New("first packet without timestamps")
+		if !p.hasDTS && !p.hasPTS {
+			return frameCRCPacket{}, errors.New("first packet without timestamps")
 		}
-		return ts[0], ts[1], has[0], has[1], nil
+		return p, nil
 	}
-	return 0, 0, false, false, errors.New("no packet in framecrc output")
+	return frameCRCPacket{}, errors.New("no packet in framecrc output")
 }

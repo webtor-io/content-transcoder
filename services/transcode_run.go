@@ -37,8 +37,9 @@ type TranscodeRun struct {
 	// realStart is the movie time media time 0 of this run actually maps
 	// to. For a copy-mode video the input seek lands on the keyframe at or
 	// before seekTime (-noaccurate_seek; for an MKV with B-frames at or
-	// before seekTime - 3/23 s), so the run starts up to a GOP earlier
-	// than the quantized value; every side-loaded subtitle track
+	// before seekTime - 3/23 s; for an MPEG-TS, without an index, often the
+	// next one after it), so the run starts up to a GOP away from the
+	// quantized value; every side-loaded subtitle track
 	// shifted by the quantized offset then runs ahead of the sound by that
 	// difference (measured 1.657 s on stage). Resolved once per run by
 	// probeRunStart before FFmpeg is spawned. A separate resolved flag, not
@@ -260,7 +261,14 @@ func (r *TranscodeRun) startLocked() error {
 			}
 			params = injectPassthroughSeekParams(params, r.seekTime, realStart, trimAudio)
 		} else if r.isVideoCopy() {
-			params = injectSeekParams(params, r.seekTime, true)
+			// resolveRealStartOnce ran before the lock (Start); the copy
+			// route keeps even a fallback, and without any the real start
+			// is the quantized seek.
+			realStart := r.seekTime
+			if r.realStartResolved {
+				realStart = r.realStart
+			}
+			params = injectCopySeekParams(params, r.seekTime, realStart, r.h.subtitleOutputMaps())
 		} else {
 			params = injectSeekParams(params, r.seekTime, false)
 			// The accurate seek trims only what is decoded: the outputs
@@ -666,11 +674,24 @@ func (r *TranscodeRun) RealStart() float64 {
 	return r.seekTime
 }
 
+// realStartSpan bounds how far from the quantized seek a run can plausibly
+// start: a broken index can name anything, and 60 s is well past any GOP
+// we transcode.
+const realStartSpan = 60
+
 // resolveRealStart asks probeRunStart for the keyframe and falls back to
 // the quantized seek time on any answer that cannot be right: an error, a
-// keyframe after the seek point, or one implausibly far before it (a
-// broken index; 60 s is well past any GOP we transcode). result says which
-// (realStart*).
+// time before the file, or one implausibly far from the seek point
+// (realStartSpan) -- and, for passthrough, any time after it. result says
+// which (realStart*).
+//
+// A copy-route answer after the seek point is where the run starts: the
+// probe seeks exactly as the run does (copySeekInput), and a format without
+// an index (MPEG-TS) lands on the next keyframe after it
+// (ffmpegSeekFirstFrame). Refused, a seek to 35 on a TS with keyframes at
+// 25 and 35 reported 30.000 for a run starting at 35.021: every
+// side-loaded cue 5 s early. Passthrough's -itsoffset only moves the zero
+// back (injectPassthroughSeekParams), and it keeps its old guard.
 func (r *TranscodeRun) resolveRealStart() (float64, string) {
 	stream := "v:0"
 	if r.h != nil {
@@ -690,7 +711,11 @@ func (r *TranscodeRun) resolveRealStart() (float64, string) {
 		r.logger.WithError(err).Warn("run: failed to resolve the real start, reporting the quantized seek")
 		return r.seekTime, realStartFailed
 	}
-	if k < 0 || k > r.seekTime || r.seekTime-k > 60 {
+	after := float64(realStartSpan)
+	if r.h != nil && r.h.passthrough {
+		after = 0
+	}
+	if k < 0 || k-r.seekTime > after || r.seekTime-k > realStartSpan {
 		r.logger.WithField("keyframe", fmt.Sprintf("%.3f", k)).Warn("run: implausible keyframe, reporting the quantized seek")
 		return r.seekTime, realStartImplausible
 	}
@@ -723,7 +748,8 @@ func removeParam(params []string, flag string) []string {
 // injectSeekParams adds -ss before -i (input-level seek).
 //
 // For copy-mode video: adds -noaccurate_seek so both video (copy) and audio
-// (re-encode) start from the same keyframe → A/V sync.
+// (re-encode) start from the same keyframe → A/V sync (injectCopySeekParams
+// builds the copy route's seek on it).
 //
 // For re-encode mode: just -ss (accurate seek). FFmpeg decodes from the nearest
 // keyframe and discards what comes before the target -- but only for the
@@ -754,13 +780,77 @@ func injectSeekParams(params []string, seekSec float64, videoCopy bool) []string
 	return result
 }
 
+// injectCopySeekParams is the seek of a copy-route run: the input seek
+// (copySeekInput, exactly what probeRunStart asks FFmpeg with: -noaccurate_seek
+// starts the copied video and the audio from the same keyframe), every
+// output's time zero moved from the quantized seek to realStart, and the
+// outputs whose -map is in cut (the subtitles) started at that zero.
+//
+// Without the offset every output takes the quantized time as zero and
+// shifts its own negative timestamps away (libavformat/mux.c,
+// avoid_negative_ts): the video and the audio begin at the keyframe the
+// offset names, the subtitles at the first cue the demuxer hands over or
+// the quantized time -- cues early against #EXT-X-SESSION-OFFSET by up to a
+// GOP. A run that landed on the file's first frame (offset 0.000, the only
+// keyframe before the seek point is the first) served every cue early by
+// the first cue's time, and subtitle-translate reads offset 0 as the run
+// from the start, whose translation it stores for good. Measured on FFmpeg
+// 8.1.2, cues at 1, 21, 26 and 33 s on an MKV with keyframes at 0 and 30:
+// a seek to 30 served them at 0, 20, 25 and 32 with the offset 0.000; with
+// -itsoffset 30 and the cut at 1, 21, 26 and 33 -- the playlist and every
+// segment byte for byte the run from the start's. Keyframes every 10 s,
+// the same seek (run at 20): 21, 26, 33 s from 0, 5, 12 to 1, 6, 13.
+//
+// The video and the audio are not changed by it: realStart is the video's
+// first PTS, so its first DTS is still negative by the B-frame delay and
+// its output shifts that away as it shifted the larger one before -- the
+// same timestamps -- and so does the audio, which the demuxer's seek hands
+// over from a little before the keyframe (measured: the first AAC packet at
+// 19.925 for the keyframe at 20.000, and every video and audio segment and
+// playlist byte for byte the same with and without the offset). -ss 0 on a
+// subtitle output drops the cues that start before the zero, encoded
+// (fftools/ffmpeg_enc.c do_subtitle_out) or copied webvtt (ffmpeg_mux.c
+// of_streamcopy) alike, and shifts neither: with the offset those are the
+// cues before the keyframe, which would otherwise be negative and move
+// every cue after them (mov_text in MP4 seeks to the cue on screen, with
+// its own start). The one on screen at the keyframe is lost with them, as
+// on the re-encode route. Measured for SRT, ASS, copied WebVTT and mov_text:
+// every cue served at its movie time minus the offset.
+//
+// Only a zero moved back (realStart before the seek point), as passthrough
+// does (injectPassthroughSeekParams). When the run starts after the seek
+// point (MPEG-TS, see resolveRealStart) the demuxer hands over the audio
+// from before the keyframe -- measured on a TS, the first AAC packet at
+// 29.739 for a seek to 30 that started the video at 35.021 -- and a zero
+// moved forward to the keyframe made that audio negative: its output
+// shifted the whole track, 5.2 s late against the picture. There the cut
+// still keeps the cues from before the seek point from moving the rest,
+// and the cues run late against the offset by the distance to the keyframe,
+// as they did before.
+func injectCopySeekParams(params []string, seek, realStart float64, cut []string) []string {
+	params = injectSeekParams(params, seek, true)
+	if d := seek - realStart; d > 0 {
+		result := make([]string, 0, len(params)+2)
+		for _, p := range params {
+			if p == "-i" {
+				result = append(result, "-itsoffset", fmt.Sprintf("%.6f", d))
+			}
+			result = append(result, p)
+		}
+		params = result
+	}
+	return cutAtOutputStart(params, cut)
+}
+
 // cutAtOutputStart puts -ss 0 before the -map of every output whose map is
 // in maps: an output start time of 0, counted like every timestamp of the
-// run from the input seek point, so that output drops what the demuxer
-// hands it from before that point -- a copied packet whose DTS is below it
+// run from its zero (the input seek point, or the copy route's realStart
+// by -itsoffset), so that output drops what the demuxer hands it from
+// before that point -- a copied packet whose DTS is below it
 // (fftools/ffmpeg_mux.c of_streamcopy), a subtitle whose start is
-// (ffmpeg_enc.c do_subtitle_out). The same placement as the passthrough
-// route's audio cut (injectPassthroughSeekParams).
+// (ffmpeg_enc.c do_subtitle_out). Neither is shifted by it: 0 is where the
+// output starts. The same placement as the passthrough route's audio cut
+// (injectPassthroughSeekParams).
 func cutAtOutputStart(params []string, maps []string) []string {
 	if len(maps) == 0 {
 		return params
@@ -822,8 +912,14 @@ func (h *HLS) reencodeSeekCuts(opts ParamOptions) []string {
 			maps = append(maps, fmt.Sprintf("0:%d", a.s.GetIndex()))
 		}
 	}
+	return append(maps, h.subtitleOutputMaps()...)
+}
+
+// subtitleOutputMaps are the -map values of the session's subtitle
+// outputs; a track without a decoder has none (ffmpegParamsFor).
+func (h *HLS) subtitleOutputMaps() []string {
+	var maps []string
 	for _, s := range h.subs {
-		// A track without a decoder has no output (ffmpegParamsFor).
 		if s.hasTextDecoder() {
 			maps = append(maps, fmt.Sprintf("0:%d", s.s.GetIndex()))
 		}
