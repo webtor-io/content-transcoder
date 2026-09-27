@@ -53,12 +53,17 @@ const (
 // Run modes: what FFmpeg does to the primary stream, which is what decides
 // how fast a run can go. copy remuxes h264 video (bound by the source),
 // reencode encodes video to h264 (bound by the CPU), audio is an audio-only
-// source.
+// source, passthrough remuxes HEVC video into fMP4 (bound by the source,
+// paced in media time: see pacing_media.go).
 const (
-	runModeCopy     = "copy"
-	runModeReencode = "reencode"
-	runModeAudio    = "audio"
+	runModeCopy        = "copy"
+	runModeReencode    = "reencode"
+	runModeAudio       = "audio"
+	runModePassthrough = "passthrough"
 )
+
+// runModes is every run mode, for registration.
+var runModes = []string{runModeCopy, runModeReencode, runModeAudio, runModePassthrough}
 
 // Run starts: from the beginning of the source, or from a seek.
 const (
@@ -83,6 +88,21 @@ const (
 	probeOutcomeOK    = "ok"
 	probeOutcomeError = "error"
 )
+
+// Outcomes of the transcoder's own look at an HEVC source (sourceProber).
+const (
+	sourceProbeOK     = "ok"
+	sourceProbeFailed = "failed"
+)
+
+// sourceProbeBuckets: the look is expected at about a second on a warm
+// source; 1.5 s at p90 is the bar for switching passthrough on, and 10 s is
+// two failed attempts.
+var sourceProbeBuckets = []float64{0.1, 0.25, 0.5, 1, 1.5, 2, 3, 5, 10}
+
+// segmentsServedBuckets: how many primary segments a session was served
+// before it went away. <= 2 is a session that never really played.
+var segmentsServedBuckets = []float64{0, 1, 2, 3, 5, 10, 20, 50, 100, 300, 1000}
 
 // secondsBuckets covers the waits this service does: a playlist appears in
 // a few seconds on a warm source and in tens of seconds on a cold torrent;
@@ -190,6 +210,23 @@ var (
 		Help:      "Time to probe a source (its first read; cached probe results are not counted), by outcome.",
 		Buckets:   secondsBuckets,
 	}, []string{"outcome"})
+	metricVideoRouteTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsNamespace,
+		Name:      "video_route_total",
+		Help:      "POST /session answers by the video route (passthrough, copy, reencode, audio; refused for a 415 or the 503 of a failed source check, error for other failures) and the reason it was chosen.",
+	}, []string{"route", "reason"})
+	metricSourceProbeSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: metricsNamespace,
+		Name:      "source_probe_seconds",
+		Help:      "Time of the transcoder's own look at an HEVC source before passthrough, retries included, by result (ok, failed); cached results are not counted.",
+		Buckets:   sourceProbeBuckets,
+	}, []string{"result"})
+	metricSessionSegmentsServed = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: metricsNamespace,
+		Name:      "session_segments_served",
+		Help:      "Primary-stream segments served to a session over its life, observed when it is removed, by video route.",
+		Buckets:   segmentsServedBuckets,
+	}, []string{"route"})
 )
 
 // Every label value is registered at start so each series exists at 0 from
@@ -212,7 +249,7 @@ func init() {
 	for _, o := range []string{probeOutcomeOK, probeOutcomeError} {
 		metricSourceOpenSeconds.WithLabelValues(o)
 	}
-	for _, m := range []string{runModeCopy, runModeReencode, runModeAudio} {
+	for _, m := range runModes {
 		metricRunSpeed.WithLabelValues(m)
 		metricRunPauseSeconds.WithLabelValues(m)
 		metricRunResumeSegmentSeconds.WithLabelValues(m)
@@ -223,5 +260,26 @@ func init() {
 	}
 	for _, c := range []string{failureSubtitleBitmap, failureNoDecoder, failureTimestamps, failureInvalidData, failureSource, failureSignal, failureOther} {
 		metricFFmpegFailuresTotal.WithLabelValues(c)
+	}
+	for _, r := range []string{sourceProbeOK, sourceProbeFailed} {
+		metricSourceProbeSeconds.WithLabelValues(r)
+	}
+	for _, r := range []string{videoRoutePassthrough, videoRouteCopy, videoRouteReencode, videoRouteAudio} {
+		metricSessionSegmentsServed.WithLabelValues(r)
+	}
+	// The route series a dashboard compares from the first scrape: every
+	// reason on the two routes it can end in, the reasons a copy or audio
+	// source can get, and the one way to passthrough.
+	metricVideoRouteTotal.WithLabelValues(videoRoutePassthrough, reasonOK)
+	for _, reason := range routeReasons {
+		if reason == reasonOK {
+			continue
+		}
+		metricVideoRouteTotal.WithLabelValues(videoRouteReencode, reason)
+		metricVideoRouteTotal.WithLabelValues(videoRouteRefused, reason)
+	}
+	for _, reason := range []string{reasonNoDeclaration, reasonPassthroughOff, reasonNotHEVC} {
+		metricVideoRouteTotal.WithLabelValues(videoRouteCopy, reason)
+		metricVideoRouteTotal.WithLabelValues(videoRouteAudio, reason)
 	}
 }

@@ -23,9 +23,9 @@ type RunManager struct {
 	// reported (see rememberRealStart): the offset a key answers must
 	// survive the run object being reaped.
 	realStarts map[string]float64
-	// fallbacks remembers, per source (hashDir), the FFmpeg options a failed
-	// run of it turned out to need (TranscodeRun.fallbacks), so a seek does
-	// not spend a failed run to find out again.
+	// fallbacks remembers, per source and route (fallbackKey), the FFmpeg
+	// options a failed run of it turned out to need (TranscodeRun.fallbacks),
+	// so a seek does not spend a failed run to find out again.
 	fallbacks map[string]ParamOptions
 	done        chan struct{}
 	closed     bool
@@ -51,15 +51,36 @@ func runKey(hashDir string, seekTime float64) string {
 	return fmt.Sprintf("%s:seek:%.3f", hashDir, seekTime)
 }
 
+// runKeyFor is the key of a run of h: runKey for the old route, unchanged
+// so the old and the new pod of a rollout keep sharing its runs, and
+// "<hashDir>:<variant>:seek:<t>" for passthrough (HLS.runVariant).
+func runKeyFor(hashDir string, h *HLS, seekTime float64) string {
+	if v := h.runVariant(); v != "" {
+		return fmt.Sprintf("%s:%s:seek:%.3f", hashDir, v, seekTime)
+	}
+	return runKey(hashDir, seekTime)
+}
+
+// fallbackKey is what the options a failed run turned out to need are
+// remembered under: the source, and the route unless it is the old one. A
+// copy of HEVC out of an MKV trips over timestamps where an encode does
+// not, and must not take -xerror off the old route of the same file.
+func fallbackKey(hashDir string, h *HLS) string {
+	if v := h.runVariant(); v != "" {
+		return hashDir + ":" + v
+	}
+	return hashDir
+}
+
 // Acquire returns an existing run or creates a new one.
 // The returned run has its refCount incremented.
 // If the run is new, FFmpeg is started automatically.
-// ResolvedStart is the real start a run for this (hashDir, seekTime) once
+// ResolvedStart is the real start a run under key (runKeyFor) once
 // reported, if any run on this pod has resolved one.
-func (m *RunManager) ResolvedStart(hashDir string, seekTime float64) (float64, bool) {
+func (m *RunManager) ResolvedStart(key string) (float64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	v, ok := m.realStarts[runKey(hashDir, seekTime)]
+	v, ok := m.realStarts[key]
 	return v, ok
 }
 
@@ -75,13 +96,13 @@ func (m *RunManager) rememberRealStart(key string, v float64) {
 	m.realStarts[key] = v
 }
 
-func (m *RunManager) rememberFallbacks(hashDir string, opts ParamOptions) {
+func (m *RunManager) rememberFallbacks(key string, opts ParamOptions) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.fallbacks) > 8192 {
 		m.fallbacks = map[string]ParamOptions{}
 	}
-	m.fallbacks[hashDir] = opts
+	m.fallbacks[key] = opts
 }
 
 // newRunLocked builds a run wired into this manager's real-start memory:
@@ -95,7 +116,7 @@ func (m *RunManager) newRunLocked(key, hashDir string, seekTime float64, sourceU
 	run := newTranscodeRun(key, hashDir, seekTime, sourceURL, h)
 	run.onRealStart = m.rememberRealStart
 	run.onFallbacks = m.rememberFallbacks
-	run.fallbacks = m.fallbacks[hashDir]
+	run.fallbacks = m.fallbacks[fallbackKey(hashDir, h)]
 	if v, ok := m.realStarts[key]; ok {
 		run.realStart = v
 		run.realStartResolved = true
@@ -104,7 +125,7 @@ func (m *RunManager) newRunLocked(key, hashDir string, seekTime float64, sourceU
 }
 
 func (m *RunManager) Acquire(hashDir string, seekTime float64, sourceURL string, h *HLS) (*TranscodeRun, error) {
-	key := runKey(hashDir, seekTime)
+	key := runKeyFor(hashDir, h, seekTime)
 
 	m.mu.Lock()
 	if mr, ok := m.runs[key]; ok {

@@ -64,6 +64,9 @@ type Web struct {
 	hlsBuilder     *HLSBuilder
 	sessionManager *SessionManager
 	touchMap       *TouchMap
+	// sourceProber is the transcoder's own look at an HEVC source before
+	// passthrough (source_probe.go); nil reads as a failed look.
+	sourceProber *sourceProber
 	// gs drains in-flight requests on Close, up to WEB_SHUTDOWN_TIMEOUT,
 	// instead of dropping them with the listener.
 	gs *cs.GracefulServer
@@ -79,6 +82,7 @@ func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, 
 		hlsBuilder:     hlsBuilder,
 		sessionManager: sessionManager,
 		touchMap:       touchMap,
+		sourceProber:   newSourceProber(),
 		gs:             cs.NewGracefulServer(cs.ShutdownTimeout(c)),
 	}
 	we.buildHandler()
@@ -208,7 +212,24 @@ func (s *Web) Close() {
 type sessionCreateResponse struct {
 	ID       string  `json:"id"`
 	Duration float64 `json:"duration"`
+	// VideoRoute is what the session does with the video: passthrough,
+	// copy, reencode, or audio for a source without one.
+	VideoRoute string `json:"video_route"`
+	// RouteReason is why (the reason* constants in route.go).
+	RouteReason string `json:"route_reason"`
 }
+
+// Answers of POST /session that are about the route. A refusal (415, and
+// the 503 below) names its reason in this header: the body of the 415 stays
+// what it was, clients match on it.
+const (
+	routeReasonHeader = "X-Video-Route-Reason"
+	// errSourceCheckFailed is the 503 body when the source could not be
+	// checked for passthrough and the old route refuses it: a check that
+	// did not answer is not a source that cannot play, so it is not a 415.
+	errSourceCheckFailed  = "source check failed"
+	sourceCheckRetryAfter = "5"
+)
 
 // sessionCreateHandler handles POST /session?source_url=...
 // @Summary Create transcoding session
@@ -217,10 +238,12 @@ type sessionCreateResponse struct {
 // @Produce json
 // @Param source_url query string false "Source media URL (alternative to X-Source-Url header)"
 // @Param X-Source-Url header string false "Source media URL (takes priority over query param)"
+// @Param decode query string false "What the client decodes, comma-separated tokens: hevc8, hevc10, hevc8-2160, hevc10-2160, hevc-high, hdr-pq; or unknown"
 // @Success 200 {object} sessionCreateResponse
 // @Failure 400 {string} string "Missing or invalid source_url"
-// @Failure 415 {string} string "Source cannot be transcoded (resolution over 1080p or transcoding disabled)"
+// @Failure 415 {string} string "Source cannot be transcoded (resolution over 1080p or transcoding disabled); reason in X-Video-Route-Reason"
 // @Failure 500 {string} string "Internal error"
+// @Failure 503 {string} string "The source could not be checked (source check failed); retry, see Retry-After"
 // @Router /session [post]
 func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -234,15 +257,31 @@ func (s *Web) sessionCreateHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, code, msg := s.openSession(sourceURL, true)
+	decl := parseDecodeDeclaration(r.URL.Query()["decode"])
+	sess, route, code, msg := s.openSessionWith(sourceURL, true, decl)
 	if sess == nil {
+		if route.reason != "" {
+			label := videoRouteRefused
+			if code != http.StatusUnsupportedMediaType && code != http.StatusServiceUnavailable {
+				label = videoRouteError
+			}
+			metricVideoRouteTotal.WithLabelValues(label, route.reason).Inc()
+			w.Header().Set(routeReasonHeader, route.reason)
+			if code == http.StatusServiceUnavailable {
+				w.Header().Set("Retry-After", sourceCheckRetryAfter)
+			}
+		}
 		http.Error(w, msg, code)
 		return
 	}
+	videoRoute := sess.h.videoRoute()
+	metricVideoRouteTotal.WithLabelValues(videoRoute, route.reason).Inc()
 
 	resp, err := json.Marshal(sessionCreateResponse{
-		ID:       sess.id,
-		Duration: sess.duration,
+		ID:          sess.id,
+		Duration:    sess.duration,
+		VideoRoute:  videoRoute,
+		RouteReason: route.reason,
 	})
 	if err != nil {
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
@@ -283,27 +322,43 @@ func (s *Web) sourceHashDir(sourceURL string) (string, int, string) {
 // master, see legacyPlaylistHandler). On failure the session is nil and the
 // HTTP status and message to answer with are returned.
 func (s *Web) openSession(sourceURL string, start bool) (*Session, int, string) {
+	sess, _, code, msg := s.openSessionWith(sourceURL, start, viewerDeclaration{})
+	return sess, code, msg
+}
+
+// openSessionWith is openSession for a client that declared what it
+// decodes (decl; the zero value is no declaration, the old route). It also
+// returns the route decision, set once the source is known -- for a
+// refusal too, whose reason the caller passes on.
+func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclaration) (*Session, routeDecision, int, string) {
 	hashDir, code, msg := s.sourceHashDir(sourceURL)
 	if code != http.StatusOK {
-		return nil, code, msg
+		return nil, routeDecision{}, code, msg
 	}
 
 	// Probe media
 	pr, err := s.contentProbe.Get(sourceURL, hashDir)
 	if err != nil {
 		log.WithError(err).Error("session: failed to probe media")
-		return nil, http.StatusInternalServerError, "failed to probe media"
+		return nil, routeDecision{}, http.StatusInternalServerError, "failed to probe media"
 	}
 
 	duration := getDuration(pr)
 	hls := s.hlsBuilder.Build(sourceURL, pr)
+	route := s.routeFor(sourceURL, hashDir, hls, decl)
+	if route.passthrough && !hls.usePassthrough() {
+		// Not reachable with HLSBuilder (always Online, and passthrough
+		// needs an HEVC video): an HLS that cannot take the route does not
+		// pass anything through.
+		route = oldRoute(reasonPassthroughOff)
+	}
 	// Content with neither video nor audio is refused before a session
 	// exists: GetFFmpegParams would refuse it too, but only when FFmpeg is
 	// started, and the legacy route opens a session without starting it
 	// (it answered 200 with a master that had no variant).
 	if len(hls.primary) == 0 {
 		log.WithField("sourceURL", redactSecrets(sourceURL)).Info("session: no video or audio stream")
-		return nil, http.StatusUnsupportedMediaType, ErrNoPlayableStreams.Error()
+		return nil, route, http.StatusUnsupportedMediaType, ErrNoPlayableStreams.Error()
 	}
 
 	// Create session
@@ -317,15 +372,17 @@ func (s *Web) openSession(sourceURL string, start bool) (*Session, int, string) 
 	// Create session directory and write master playlist
 	if err := os.MkdirAll(sess.outputDir, 0755); err != nil {
 		s.sessionManager.Close(sess.id)
-		return nil, http.StatusInternalServerError, "failed to create session dir"
+		return nil, route, http.StatusInternalServerError, "failed to create session dir"
 	}
+	// TODO(passthrough output): a passthrough master is written from the
+	// first process's init (CODECS of the output hvcC), not here.
 	if err := hls.MakeMasterPlaylist(sess.outputDir); err != nil {
 		s.sessionManager.Close(sess.id)
-		return nil, http.StatusInternalServerError, "failed to create master playlist"
+		return nil, route, http.StatusInternalServerError, "failed to create master playlist"
 	}
 
 	if !start {
-		return sess, http.StatusOK, ""
+		return sess, route, http.StatusOK, ""
 	}
 
 	// Start FFmpeg from 0
@@ -333,12 +390,57 @@ func (s *Web) openSession(sourceURL string, start bool) (*Session, int, string) 
 		s.sessionManager.Close(sess.id)
 		log.WithError(err).Error("session: failed to start ffmpeg")
 		if reason := unsupportedContentReason(err); reason != "" {
-			return nil, http.StatusUnsupportedMediaType, reason
+			// The old route refuses the video, and the look that could have
+			// put the session on passthrough did not answer: retryable.
+			if route.reason == reasonProbeFailed && refusesVideo(err) {
+				return nil, route, http.StatusServiceUnavailable, errSourceCheckFailed
+			}
+			return nil, route, http.StatusUnsupportedMediaType, reason
 		}
-		return nil, http.StatusInternalServerError, "failed to start transcoding"
+		return nil, route, http.StatusInternalServerError, "failed to start transcoding"
 	}
 
-	return sess, http.StatusOK, ""
+	return sess, route, http.StatusOK, ""
+}
+
+// routeFor decides the session's route (videoRouteFor) from the
+// declaration, this transcoder's capability, content-prober's answer and,
+// when all of those allow passthrough, the transcoder's own look at the
+// source. A decision other than no_declaration is logged.
+func (s *Web) routeFor(sourceURL, hashDir string, h *HLS, decl viewerDeclaration) routeDecision {
+	src := sourceVideo{}
+	if v := h.primaryVideo(); v != nil {
+		src = sourceVideo{
+			codec:  v.s.GetCodecName(),
+			width:  int(v.s.GetWidth()),
+			height: int(v.s.GetHeight()),
+			index:  int(v.s.GetIndex()),
+		}
+	}
+	var capability passthroughCapability
+	if s.hlsBuilder != nil {
+		capability = s.hlsBuilder.PassthroughCapability()
+	}
+	d := videoRouteFor(src, decl, capability, func() (sourceHEVCFacts, error) {
+		return s.sourceProber.Facts(sourceURL, hashDir, src.index)
+	})
+	if d.reason != reasonNoDeclaration {
+		log.WithFields(log.Fields{
+			"source":      redactSecrets(sourceURL),
+			"decode":      decl.String(),
+			"codec":       src.codec,
+			"size":        fmt.Sprintf("%dx%d", src.width, src.height),
+			"passthrough": d.passthrough,
+			"reason":      d.reason,
+		}).Info("session: video route")
+	}
+	return d
+}
+
+// refusesVideo reports whether err is the old route refusing to encode the
+// video (over 1080p, or encoding disabled).
+func refusesVideo(err error) bool {
+	return errors.Is(err, ErrResolutionNotSupported) || errors.Is(err, ErrTranscodingDisabled)
 }
 
 // Legacy routes. Before the session API (76cc495, 2026-03) a stream was
@@ -747,6 +849,7 @@ func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess
 	// The run's pacing holds FFmpeg this far ahead of what viewers ask for.
 	if n, err := parseSegmentNumber("/" + filename); err == nil {
 		sess.noteDemand(n)
+		sess.noteMediaDemand(filename)
 	}
 
 	// If FFmpeg is not running, auto-restart from the right position
@@ -839,6 +942,7 @@ func (s *Web) serveSegment(w http.ResponseWriter, r *http.Request, sess *Session
 		http.Error(w, "segment not found", http.StatusNotFound)
 		return
 	}
+	sess.notePrimaryServed(filename)
 	w.Header().Set("ETag", segmentETag(generation, fi.Size()))
 	// Exactly the bytes the ETag names: FFmpeg may still be appending.
 	http.ServeContent(w, r, filename, time.Time{}, io.NewSectionReader(f, 0, fi.Size()))

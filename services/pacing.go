@@ -36,6 +36,23 @@ var (
 	paceResumeStall = 30 * time.Second
 )
 
+// paceTiming is the pace loop's timing, taken when the process starts
+// rather than read by the loop's goroutine later: tests set the variables
+// above and restore them when they end, and a loop that read them after its
+// process was gone raced the restore (go test -race, TestRestartResetsDemand).
+type paceTiming struct {
+	poll, resumeGap, resumeStall, resumeStallMedia time.Duration
+}
+
+func currentPaceTiming() paceTiming {
+	return paceTiming{
+		poll:             pacePoll,
+		resumeGap:        paceResumeGap,
+		resumeStall:      paceResumeStall,
+		resumeStallMedia: paceResumeStallMedia,
+	}
+}
+
 // paceSegments converts a media duration to a count of sessionSegDuration
 // segments.
 func paceSegments(d time.Duration) int {
@@ -84,13 +101,13 @@ func fileExists(path string) bool {
 
 // pace runs for one FFmpeg process (started by watchProcessLocked) and
 // freezes and releases it against the viewers' demand until done closes.
-func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, mode string) {
+func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, mode string, tm paceTiming) {
 	leadSegs := paceSegments(lead)
-	resumeSegs := paceSegments(lead - paceResumeGap)
+	resumeSegs := paceSegments(lead - tm.resumeGap)
 	if resumeSegs < 1 {
 		resumeSegs = 1
 	}
-	t := time.NewTicker(pacePoll)
+	t := time.NewTicker(tm.poll)
 	defer t.Stop()
 	var pausedAt time.Time
 	// After a resume: the first primary segment FFmpeg had not started when
@@ -167,7 +184,7 @@ func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, m
 			case fileExists(r.primarySegmentPath(waitSeg)):
 				metricRunResumeSegmentSeconds.WithLabelValues(mode).Observe(since.Seconds())
 				waitSeg = -1
-			case !stallCounted && since >= paceResumeStall:
+			case !stallCounted && since >= tm.resumeStall:
 				stallCounted = true
 				metricRunResumeStalls.WithLabelValues(mode).Inc()
 				r.logger.WithFields(log.Fields{

@@ -163,7 +163,7 @@ func TestResolvedStartSurvivesTheRunObject(t *testing.T) {
 	if got := r1.RealStart(); got != 598.343 || probes != 1 {
 		t.Fatalf("first run resolves once: got %v after %d probes", got, probes)
 	}
-	if v, ok := m.ResolvedStart(dir, 600); !ok || v != 598.343 {
+	if v, ok := m.ResolvedStart(runKey(dir, 600)); !ok || v != 598.343 {
 		t.Fatalf("the manager must remember what the run reported: %v %v", v, ok)
 	}
 

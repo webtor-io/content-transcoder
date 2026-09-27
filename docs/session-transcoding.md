@@ -10,17 +10,74 @@ The transcoder uses a session-based model where each viewer creates a session vi
 
 1. Probe media via ffprobe (cached in `index.json`)
 2. Build HLS params from probe result
-3. Create session with unique ID
-4. Write master playlist (`index.m3u8`) to session directory
-5. Acquire a shared `TranscodeRun` at position 0 via `RunManager`
-6. Return `{ id, duration }` to player
+3. Decide the video route (see [Video Route](#video-route-hevc-passthrough))
+4. Create session with unique ID
+5. Write master playlist (`index.m3u8`) to session directory
+6. Acquire a shared `TranscodeRun` at position 0 via `RunManager`
+7. Return `{ id, duration, video_route, route_reason }` to player
 
 Errors: content-level rejections (`ErrResolutionNotSupported`,
 `ErrTranscodingDisabled` — the source can never be transcoded by this
 deployment) return **415** with the reason as plain-text body, so upstream
 UIs can show a specific message (web-ui maps the body to a localized error
 via `ClassifyError`). Transient internal failures return a generic **500**
-to avoid leaking internals.
+to avoid leaking internals. A refusal names the route reason in
+`X-Video-Route-Reason`; the body stays what it was. When the transcoder's
+own look at an HEVC source failed and the old route refuses it (over 1080p),
+the answer is **503** `source check failed` with `Retry-After: 5` instead of
+the 415: a check that did not answer is not a source that cannot play.
+
+### Video Route (HEVC passthrough)
+
+A session either takes the **old route** — h264 copied into TS, other video
+re-encoded to h264 up to 1080p, over 1080p refused with 415 — or
+**passthrough**: the source's HEVC handed to the player as it is (fMP4,
+`-c:v copy -bsf:v hevc_mp4toannexb -tag:v hvc1`). The transcoder decides;
+the client only declares what it decodes.
+
+- **Declaration.** `POST /session?...&decode=<tokens>`, comma-separated:
+  `hevc8`, `hevc10`, `hevc8-2160`, `hevc10-2160`, `hevc-high`, `hdr-pq`, or
+  `unknown` (the client's check had not answered). Exact allowlist match;
+  unknown tokens are ignored, an empty, garbage or over-512-byte value is no
+  declaration. A higher token covers the lower (`hevc10` covers Main, a
+  `-2160` token its depth at 1080).
+- **Capability.** `--passthrough-video-codecs` / `PASSTHROUGH_VIDEO_CODECS`
+  lists the source codecs passed through (`hevc`); empty — the default —
+  passes none. `--passthrough-video-codecs-file` /
+  `PASSTHROUGH_VIDEO_CODECS_FILE` overrides it and is re-read on every new
+  session when it changed (mtime, size or inode: a ConfigMap mounted as a
+  directory), so passthrough is switched without a restart; sessions already
+  open keep their route. An unreadable file keeps the last value. Only codecs
+  this build can write count (`passthroughBuildCodecs`); the line
+  `HEVC passthrough: on|off` at start and on every change says what is in
+  effect and what was ignored.
+- **Decision** (`videoRouteFor`, `services/route.go`), first match wins; the
+  checks before the source probe need nothing but content-prober's answer:
+  `no_declaration`, `passthrough_off`, `not_hevc`, `declaration_pending`,
+  `too_large` (over 3840×2160), `needs_2160` (over 1080 — taller or wider —
+  without a 2160 token); then the source probe: `probe_failed`, `dv5`,
+  `dv7`, `dv_base`, `dv_unknown` (RPU NAL 62/63 without a record),
+  `pix_fmt`, `interlaced`, `no_hvcc`, `profile` (not Main/Main10),
+  `too_large` (level over 5.1), `needs_main10` / `needs_2160` /
+  `needs_main` (depth and level against the tokens; level over 4.1 needs a
+  2160 token), `needs_high_tier`, `needs_pq`, `hlg_later`; otherwise `ok`.
+  Every reason except `ok` is the old route, unchanged.
+- **Source probe** (`services/source_probe.go`): one ffprobe of the video
+  stream over the source URL (`-probesize 5000000`, stream, extradata as
+  hvcC, Dolby Vision record, the first 2 packets with their data), 5 s,
+  one retry. Successes are cached in `{hashDir}/source-video-{index}.json`;
+  failures are not.
+- **The 415 over 1080p** stands for "the video would have to be encoded":
+  the passthrough route is not subject to it (nor to
+  `DISABLE_VIDEO_TRANSCODING`); the old route keeps it as it was.
+- **Old route unchanged.** With the capability empty, or without a usable
+  declaration, arguments, playlists, refusals and run layout are byte for
+  byte those of 1b25e28 (`golden_old_route_test.go` records them there,
+  `golden_route_test.go` replays them).
+- **Output side.** The fMP4 output (arguments, init with the process
+  generation, master from the output hvcC, serving `.m4s` and the init) is
+  a stub (`buildPassthroughParams`) until it is built; until then no
+  configuration can select passthrough.
 
 ### Seek (POST /session/{id}/seek?t=...)
 
@@ -109,11 +166,11 @@ This fallback only protects the video from a subtitle track that is slow. A subt
 
 ## Shared Runs (TranscodeRun)
 
-A `TranscodeRun` is one FFmpeg process writing segments to `{hashDir}/runs/seek-{time}/`. It is reference-counted — multiple sessions can share it.
+A `TranscodeRun` is one FFmpeg process writing segments to `{hashDir}/runs/seek-{time}/` (a passthrough run: `{hashDir}/runs/hevc-seek-{time}/`). It is reference-counted — multiple sessions can share it.
 
 ### Run Identity
 
-Runs are keyed by `(hashDir, seekTime)`. Two sessions with the same source URL and same quantized seek time share the same run.
+Runs are keyed by `(hashDir, seekTime)`: `{hashDir}:seek:{t}`. Two sessions with the same source URL and same quantized seek time share the same run. A passthrough run is keyed `{hashDir}:hevc:seek:{t}` (`runKeyFor`): a passthrough and an old-route session of the same source never share a run, a directory, a remembered real start (`ResolvedStart`) or remembered FFmpeg options (`fallbackKey`). The old route's key, directory and options are the ones it always had, so the old and new pods of a rollout keep sharing its runs.
 
 ### Seek Quantization
 
@@ -163,6 +220,8 @@ A run is kept from getting too far ahead of its viewers (`services/pacing.go`).
 - Metrics:
   - `transcoder_runs_paused`: processes frozen right now;
   - `transcoder_run_pause_seconds_total{mode}`: total time processes spent frozen.
+
+**Passthrough runs are paced in media time** (`services/pacing_media.go`). Their video is copied and cut at its keyframes (10 s for a typical x265 GOP) while the audio is cut every 4 s; counted by segment numbers, the audio's numbers would set the demand and the run would freeze at video segment `(t+30)/4 + 75` — 14 min ahead at the start, an hour at t = 30 min. So for them a request for segment n of a stream is a viewer at that segment's start (the EXTINF sum before it in that stream's playlist; a segment not listed yet is a viewer at the stream's edge), production is the EXTINF sum of the primary playlist, and the run freezes at production ≥ demand + lead and continues below demand + lead − 60 s. A resume counts as stalled after 60 s without a new primary segment (provisional), under `mode="passthrough"`. The old route's runs keep the segment pacing above.
 
 ## FFmpeg Seek Strategy
 
@@ -251,6 +310,13 @@ the prom port (8083, `--use-prom`, `httpprom` in the chart). Namespace
 | `auto_restarts_total` | Auto-restart attempts charged to a session's budget |
 | `restart_limit_reached_total` | Sessions that hit `maxConsecutiveRestarts` (once per session) |
 | `source_open_seconds{outcome}` | Time to probe a source (its first read); cached probes excluded |
+| `video_route_total{route,reason}` | POST /session answers by route (`passthrough`, `copy`, `reencode`, `audio`; `refused` for a 415 or the 503 of a failed check, `error` otherwise) and reason |
+| `source_probe_seconds{result}` | The passthrough source probe, retries included, `ok`/`failed`; cached results excluded |
+| `session_segments_served{route}` | Primary segments served to a session, observed when it is removed (sessions that never started a run are not observed) |
+
+Run metrics with a `mode` label (`run_first_segment_seconds`, `run_speed`,
+`run_pause_seconds_total`, `run_resume_segment_seconds`,
+`run_resume_stalls_total`) have `mode="passthrough"` for passthrough runs.
 
 A run's outcome is recorded once, when the process is reaped
 (`TranscodeRun.reapProcess`): whoever stops it leaves the reason in

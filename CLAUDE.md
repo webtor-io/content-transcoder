@@ -123,5 +123,7 @@ Depends on codec mode:
 | `--hls-aac-codec` | `HLS_AAC_CODEC` | `libfdk_aac` | Audio codec |
 | `--player` | `PLAYER` | false | Enable web player at `/player/` |
 | `--disable-video-transcoding` | `DISABLE_VIDEO_TRANSCODING` | false | Skip video re-encoding |
+| `--passthrough-video-codecs` | `PASSTHROUGH_VIDEO_CODECS` | empty | Source video codecs handed to players as they are (`hevc`); empty passes none. See docs/session-transcoding.md, Video Route |
+| `--passthrough-video-codecs-file` | `PASSTHROUGH_VIDEO_CODECS_FILE` | empty | File with the same list, re-read on change (ConfigMap switch without restart); overrides the flag |
 | `--debug` | `DEBUG` | false | Enable debug logging |
 | `--clean-on-startup` | `CLEAN_ON_STARTUP` | false | Clean output directory on startup |

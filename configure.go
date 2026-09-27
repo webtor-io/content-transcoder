@@ -19,6 +19,7 @@ func configure(app *cli.App) {
 	app.Flags = cs.RegisterPromFlags(app.Flags)
 	app.Flags = cs.RegisterPprofFlags(app.Flags)
 	app.Flags = s.RegisterHLSFlags(app.Flags)
+	app.Flags = s.RegisterPassthroughFlags(app.Flags)
 	app.Flags = cs.RegisterShutdownFlags(app.Flags)
 	app.Action = run
 }

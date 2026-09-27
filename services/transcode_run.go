@@ -25,7 +25,7 @@ const (
 // TranscodeRun represents a single shared FFmpeg process transcoding a source
 // from a specific seek position. Multiple sessions can share a run.
 type TranscodeRun struct {
-	key       string  // identity: hashDir + ":seek:" + seekTime
+	key       string  // identity: runKeyFor(hashDir, h, seekTime)
 	hashDir   string
 	seekTime  float64
 	// onRealStart, when set, reports a freshly resolved real start to the
@@ -48,7 +48,7 @@ type TranscodeRun struct {
 	realStart         float64
 	realStartResolved bool
 	realStartOnce     sync.Once
-	outputDir string // {hashDir}/runs/seek-{seekTime}/
+	outputDir string // {hashDir}/runs/[{variant}-]seek-{seekTime}/
 	sourceURL string
 	h         *HLS
 
@@ -92,8 +92,9 @@ type TranscodeRun struct {
 	// timestampsFailure), and preset by the run manager for every later run
 	// of the same source. Guarded by mu.
 	fallbacks ParamOptions
-	// onFallbacks tells the run manager what this source needs.
-	onFallbacks func(hashDir string, opts ParamOptions)
+	// onFallbacks tells the run manager what this source needs on this
+	// route (under fallbackKey).
+	onFallbacks func(key string, opts ParamOptions)
 
 	// demand is the furthest segment number any viewer has asked this run
 	// for, -1 before the first request; paused whether pace has FFmpeg
@@ -101,6 +102,10 @@ type TranscodeRun struct {
 	demand    int
 	paused    bool
 	pausedFor time.Duration
+	// mediaDemand is, for a passthrough run, the furthest segment number a
+	// viewer asked for per stream playlist (pacing_media.go); nil before
+	// the first request. Guarded by mu.
+	mediaDemand map[string]int
 
 	// firstSegment is how long the current process took to its first
 	// segment, 0 until then (watchFirstSegment). Guarded by mu.
@@ -120,6 +125,11 @@ type TranscodeRun struct {
 
 func newTranscodeRun(key, hashDir string, seekTime float64, sourceURL string, h *HLS) *TranscodeRun {
 	seekDir := fmt.Sprintf("seek-%.3f", seekTime)
+	if v := h.runVariant(); v != "" {
+		// A directory of its own: the old route's run at the same seek may
+		// be writing next to it, on this pod or another of the node.
+		seekDir = v + "-" + seekDir
+	}
 	outputDir := filepath.Join(hashDir, "runs", seekDir)
 	runCtx, runCancel := context.WithCancel(context.Background())
 	return &TranscodeRun{
@@ -282,10 +292,16 @@ func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
 	r.started = time.Now()
 	r.generation = newRunGeneration()
 	r.demand = -1
+	r.mediaDemand = nil
 	r.pausedFor = 0
 	metricRunsActive.Inc()
 	if r.h != nil && r.h.cfg != nil && r.h.cfg.paceLead > 0 && len(r.h.primary) > 0 && r.cmd != nil && r.cmd.Process != nil {
-		go r.pace(r.cmd.Process.Pid, r.h.cfg.paceLead, r.done, r.runMode())
+		tm := currentPaceTiming()
+		if r.h.passthrough {
+			go r.paceMedia(r.cmd.Process.Pid, r.h.cfg.paceLead, r.done, tm)
+		} else {
+			go r.pace(r.cmd.Process.Pid, r.h.cfg.paceLead, r.done, r.runMode(), tm)
+		}
 	}
 	if mode := r.runMode(); mode != "" {
 		start := runStartZero
@@ -337,6 +353,9 @@ func watchFirstSegment(playlist string, started time.Time, done <-chan struct{},
 func (r *TranscodeRun) runMode() string {
 	if r.h == nil || len(r.h.primary) == 0 {
 		return ""
+	}
+	if r.h.passthrough {
+		return runModePassthrough
 	}
 	for _, s := range r.h.primary {
 		if s.st == Video {
@@ -439,7 +458,7 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 				"lenient":     after.Lenient,
 			}).Warn("run: switching FFmpeg options for this source from the next start")
 			if r.onFallbacks != nil {
-				r.onFallbacks(r.hashDir, after)
+				r.onFallbacks(fallbackKey(r.hashDir, r.h), after)
 			}
 		}
 		// A source that cannot be converted fails the same way on each of

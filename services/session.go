@@ -95,6 +95,13 @@ type Session struct {
 	// day. One line per session carries the same signal.
 	capWarnOnce sync.Once
 
+	// primaryServed counts the primary-stream segments served to this
+	// session, started whether it ever had a run: a legacy GET /index.m3u8
+	// session nobody asked a variant of is not a viewer, and is not
+	// counted. Guarded by mu.
+	primaryServed int
+	started       bool
+
 	// Lifecycle
 	closed bool
 	logger *log.Entry
@@ -148,6 +155,7 @@ func (s *Session) acquireRunLocked() error {
 		return err
 	}
 	s.run = run
+	s.started = true
 	return nil
 }
 
@@ -209,6 +217,10 @@ func (s *Session) Close() {
 	}
 	s.closed = true
 
+	if route := s.h.videoRoute(); route != "" && s.started {
+		metricSessionSegmentsServed.WithLabelValues(route).Observe(float64(s.primaryServed))
+	}
+
 	s.releaseRunLocked()
 
 	// Remove session directory (master playlist only)
@@ -236,6 +248,32 @@ func (s *Session) noteDemand(n int) {
 	if run != nil {
 		run.noteDemand(n)
 	}
+}
+
+// noteMediaDemand tells a passthrough run which segment file a viewer asked
+// for (pacing_media.go); other runs ignore it.
+func (s *Session) noteMediaDemand(filename string) {
+	s.mu.Lock()
+	run := s.run
+	s.mu.Unlock()
+	if run != nil {
+		run.noteMediaDemand(filename)
+	}
+}
+
+// notePrimaryServed counts a primary-stream segment served to the session
+// (session_segments_served, observed when the session is removed).
+func (s *Session) notePrimaryServed(filename string) {
+	if s.h == nil || len(s.h.primary) == 0 {
+		return
+	}
+	stream, _, ok := segmentStreamPlaylist(filename)
+	if !ok || stream != s.h.primary[0].GetPlaylistName() {
+		return
+	}
+	s.mu.Lock()
+	s.primaryServed++
+	s.mu.Unlock()
 }
 
 func (s *Session) noteSegmentServed() {
@@ -279,7 +317,7 @@ func (s *Session) RunStart() float64 {
 	// GET a player does at mount answered the quantized value for an idle
 	// session — the very number this offset exists to replace.
 	if mgr != nil {
-		if v, ok := mgr.ResolvedStart(dir, seek); ok {
+		if v, ok := mgr.ResolvedStart(runKeyFor(dir, s.h, seek)); ok {
 			return v
 		}
 	}
