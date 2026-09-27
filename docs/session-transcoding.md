@@ -218,7 +218,7 @@ budget resets on a successful segment read (`WaitForSegment`) and on explicit
 2. Clean: remove `#EXT-X-ALLOW-CACHE:YES` and `#EXT-X-ENDLIST`
 3. Inject `#EXT-X-PLAYLIST-TYPE:EVENT` if missing
 4. Inject `#EXT-X-START:TIME-OFFSET=0` so iOS Safari starts at the beginning instead of the live edge
-5. Inject `#EXT-X-SESSION-OFFSET:<seek_seconds>` — movie-time of segment 0 in this variant. Read by downstream proxies (THP grace-window math) and ignored by players per RFC 8216 §3.1
+5. Inject `#EXT-X-SESSION-OFFSET:<real start>` — movie-time of segment 0 in this variant: the quantized seek, or, when the video is copied, where FFmpeg's seek landed (see [FFmpeg Seek Strategy](#ffmpeg-seek-strategy)). Read by downstream proxies (THP grace-window math) and ignored by players per RFC 8216 §3.1
 6. Return as `application/vnd.apple.mpegurl`
 
 The same `#EXT-X-SESSION-OFFSET` tag is also injected into the master `index.m3u8` in `services/web.go` `sessionPlaylistHandler`.
@@ -325,6 +325,20 @@ ffmpeg -ss {time} -noaccurate_seek -i {url} ... -c:v copy ...
 - `-ss` before `-i`: fast input-level seek (keyframe-based)
 - `-noaccurate_seek`: disables frame trimming between keyframe and target. Both video (copy) and audio (re-encode) start from the **same keyframe** → perfect A/V sync
 - Segments numbered from 0, PTS from 0
+- **The offset is where FFmpeg's seek lands** (`realStart`: `#EXT-X-SESSION-OFFSET`, the seek answer's `offset`): the movie time of the run's first frame. It is resolved before the run starts by `ffmpegSeekFirstFrame`: FFmpeg with the run's own seek options (`copySeekInput`, shared by the run and the probe, and by passthrough's) plus `-frames:v 1 -f framecrc`; the answer is the first packet's PTS. Until 2026-09 the copy route asked ffprobe (`-read_intervals T%+#1`), whose seek has no dts heuristic and ignores the file's start time. Measured on 8.1.2 (24 fps MKVs, two frames of B-frame delay):
+
+  | Source, seek | ffprobe (before) | FFmpeg (now) | The run's first frame |
+  |---|---|---|---|
+  | 10 s GOPs, seek 30 | 30.000 | 20.000 | 20.000 |
+  | keyframe at 29.917, seek 30 | 29.917 | 20.000 | 20.000 |
+  | keyframe at 59.833, seek 60 | 59.833 | 59.833 | 59.833 |
+  | start_time 5, seek 30 | 25.000 | 20.000 | 20.000 |
+  | no B-frames, seek 30 | 30.000 | 30.000 | 30.000 |
+  | keyframes at 0 and 30, seek 30 | 30.000 | 0.000 | 0.000 |
+
+  Modelled on the Cues of 89 production sources, about 10% of copy-route seeks were 1.4–10.4 s off. The run's arguments did not change, only the answer.
+- **The PTS, not the DTS.** The run's video output puts its zero at the keyframe's DTS (the segment muxer shifts its first negative DTS to 0; the first frame's PTS in the TS is the B-frame delay, 0.083 s). hls.js places TS video by its PTS and plays the first one at media time 0: measured in Chrome 154 with hls.js 1.6.14, the frame at movie 20.000 played at 0.000. So the offset is the first frame's movie time; the DTS would put every side-loaded cue that far late. Passthrough's fMP4 keeps the DTS (`ffmpegSeekStart`), which its `-itsoffset` counts from.
+- **Embedded subtitles are not counted from `realStart`** on this route: the subtitle output shifts its own negative timestamps, so its zero is the first cue after the landing keyframe or the quantized time. Known, separate from the offset; passthrough's `-itsoffset` is the fix for it.
 
 ### Re-encode Mode (mpeg4, vp9, etc. → `-c:v h264`)
 

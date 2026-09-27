@@ -144,7 +144,7 @@ func TestInjectPassthroughSeekParams(t *testing.T) {
 	}
 	// Counted from the file's start time, as every other run: no
 	// -seek_timestamp.
-	if strings.Contains(strings.Join(passthroughSeekInput(30), " "), "seek_timestamp") {
+	if strings.Contains(strings.Join(copySeekInput(30), " "), "seek_timestamp") {
 		t.Error("absolute seek")
 	}
 	// The audio outputs of a session are its audio streams' maps.
@@ -617,7 +617,7 @@ func TestFFmpegSeekStartArgs(t *testing.T) {
 		t.Fatalf("%v %v", got, err)
 	}
 	b, _ := os.ReadFile(argsFile)
-	want := "-nostdin -v error -protocol_whitelist http,https,tcp,tls " + strings.Join(passthroughSeekInput(30), " ") +
+	want := "-nostdin -v error -protocol_whitelist http,https,tcp,tls " + strings.Join(copySeekInput(30), " ") +
 		" -i http://src/movie.mkv?api-key=K -map 0:3 -c copy -frames:v 1 -f framecrc -"
 	if strings.TrimSpace(string(b)) != want {
 		t.Errorf("args\n got %s\nwant %s", b, want)
@@ -627,7 +627,7 @@ func TestFFmpegSeekStartArgs(t *testing.T) {
 	}
 	// The run seeks with the same options.
 	run := strings.Join(injectPassthroughSeekParams([]string{"-i", "u"}, 30, 19.937, nil), " ")
-	if !strings.HasPrefix(run, strings.Join(passthroughSeekInput(30), " ")+" -itsoffset 10.063000 -i") {
+	if !strings.HasPrefix(run, strings.Join(copySeekInput(30), " ")+" -itsoffset 10.063000 -i") {
 		t.Errorf("run seek %s", run)
 	}
 }

@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"math/bits"
 	u "net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -122,21 +120,8 @@ var buildPassthroughParams = func(h *HLS, in *u.URL, out string, opts ParamOptio
 	return params, nil
 }
 
-// passthroughSeekInput is the input seek of a passthrough run at the
-// quantized time seek: the copy route's (-noaccurate_seek: the demuxer's
-// keyframe at or before it), -ss counted from the file's start time like
-// every other run's, so a passthrough seek run and the run from 0 share a
-// timeline whatever the file's start_time (measured: a source remuxed with
-// start_time 5 put a seek to 30 on the keyframe at movie 20 and the
-// offset at 19.917 -- with -seek_timestamp 1 the offset read 24.917). The
-// run and the probe of where it lands (probePassthroughStart) both use
-// exactly this.
-func passthroughSeekInput(seek float64) []string {
-	return []string{"-ss", fmt.Sprintf("%.3f", seek), "-noaccurate_seek"}
-}
-
 // injectPassthroughSeekParams is the seek of a passthrough run: its input
-// seek (passthroughSeekInput), and the output's time zero moved from the
+// seek (copySeekInput), and the output's time zero moved from the
 // quantized time to realStart, the first timestamp that seek gives. The
 // audio outputs whose -map is in trimAudio start at that zero too.
 //
@@ -177,7 +162,7 @@ func injectPassthroughSeekParams(params []string, seek, realStart float64, trimA
 	for i, p := range params {
 		switch {
 		case p == "-i":
-			result = append(result, passthroughSeekInput(seek)...)
+			result = append(result, copySeekInput(seek)...)
 			if d := seek - realStart; d > 0 {
 				result = append(result, "-itsoffset", fmt.Sprintf("%.6f", d))
 			}
@@ -203,94 +188,6 @@ func (h *HLS) passthroughAudioMaps() []string {
 // run's own input seek gives, in movie time. A variable so tests stub the
 // exec.
 var probePassthroughStart = ffmpegSeekStart
-
-// ffmpegSeekStart asks FFmpeg itself, with the run's seek options
-// (passthroughSeekInput), for the first packet of stream, and reads its
-// timestamps off the framecrc muxer. Without -copyts they come relative to
-// the seek point, as the run's do (fftools/ffmpeg_demux.c: ts_offset is
-// minus the seek plus the file's start time), and a keyframe before it is
-// negative: the real start is seek plus that. Measured on 8.1.2: -10.083 for
-// a seek to 30 over the keyframe at movie 20.000 (DTS 19.917), on the
-// source and on its copy remuxed with start_time 5.
-//
-// Not ffprobe (probeRunStart): its -read_intervals seek has no dts
-// heuristic, so for an MKV with B-frames it names a keyframe the run does
-// not start at whenever one lies in the last 3/23 s before the seek point
-// -- 30.000 for a seek to 30 on a 10 s GOP at 25 fps, where FFmpeg starts
-// at 20.000 -- and it reports no DTS for matroska, where FFmpeg guesses one
-// (19.937 for a keyframe at 20.020 with two frames of B-frame delay): with
-// the PTS as zero, the video's first DTS is negative and its output shifts
-// it away, apart from the subtitles'. Its timestamps are the file's, too,
-// not counted from its start time.
-func ffmpegSeekStart(ctx context.Context, sourceURL string, stream string, seek float64) (float64, error) {
-	// The URL comes from a request header and goes to FFmpeg as-is (an
-	// exec argument, no shell); one that parses as an option is refused.
-	if strings.HasPrefix(sourceURL, "-") {
-		return 0, errors.New("source url cannot start with a dash")
-	}
-	ffmpegPath, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		return 0, errors.Wrap(err, "ffmpeg not found")
-	}
-	ctx, cancel := context.WithTimeout(ctx, probeRunStartTimeout)
-	defer cancel()
-	args := []string{"-nostdin", "-v", "error", "-protocol_whitelist", "http,https,tcp,tls"}
-	args = append(args, passthroughSeekInput(seek)...)
-	args = append(args, "-i", sourceURL, "-map", "0:"+stream, "-c", "copy", "-frames:v", "1", "-f", "framecrc", "-")
-	out, err := exec.CommandContext(ctx, ffmpegPath, args...).Output()
-	if err != nil {
-		return 0, errors.Wrap(err, "ffmpeg failed")
-	}
-	first, err := parseFrameCRCStart(out)
-	if err != nil {
-		return 0, err
-	}
-	return seek + first, nil
-}
-
-// parseFrameCRCStart reads the first packet of FFmpeg's framecrc output:
-// "#tb 0: num/den", then "stream, dts, pts, duration, size, crc" in that
-// time base (libavformat/framecrcenc.c; a missing timestamp is INT64_MIN).
-// It returns the earlier of dts and pts, in seconds.
-func parseFrameCRCStart(out []byte) (float64, error) {
-	var num, den int64
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#tb 0:") {
-			tb := strings.TrimSpace(strings.TrimPrefix(line, "#tb 0:"))
-			if i := strings.IndexByte(tb, '/'); i > 0 {
-				num, _ = strconv.ParseInt(tb[:i], 10, 64)
-				den, _ = strconv.ParseInt(tb[i+1:], 10, 64)
-			}
-			continue
-		}
-		if line == "" || line[0] == '#' {
-			continue
-		}
-		if num <= 0 || den <= 0 {
-			return 0, errors.New("framecrc without a time base")
-		}
-		fields := strings.Split(line, ",")
-		if len(fields) < 3 {
-			return 0, errors.Errorf("unexpected framecrc line %q", line)
-		}
-		start, ok := int64(0), false
-		for _, f := range fields[1:3] {
-			v, err := strconv.ParseInt(strings.TrimSpace(f), 10, 64)
-			if err != nil || v == math.MinInt64 {
-				continue
-			}
-			if !ok || v < start {
-				start, ok = v, true
-			}
-		}
-		if !ok {
-			return 0, errors.New("first packet without timestamps")
-		}
-		return float64(start) * float64(num) / float64(den), nil
-	}
-	return 0, errors.New("no packet in framecrc output")
-}
 
 // hevcCodecString is the RFC 6381 CODECS value of an HEVC stream from its
 // hvcC (ISO/IEC 14496-15 Annex E): the sample entry, the profile space

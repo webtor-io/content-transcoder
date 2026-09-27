@@ -2,34 +2,89 @@ package services
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
 	cp "github.com/webtor-io/content-prober/content-prober"
 )
 
-func TestParseFirstPacketTime(t *testing.T) {
-	cases := []struct {
-		name string
-		out  string
-		want float64
-		err  bool
-	}{
-		{"pts and dts, dts earlier", "595.567000,595.467000\n", 595.467, false},
-		{"pts only (dts N/A)", "595.567000,N/A\n", 595.567, false},
-		{"side data lines are skipped", "side_data,\n1495.500000,1495.500000\n", 1495.5, false},
-		{"empty output", "\n", 0, true},
-		{"garbage", "N/A,N/A\n", 0, true},
+// fakeSeekTools puts an ffmpeg that records its arguments and writes the
+// framecrc line given, and an ffprobe that answers 30.000, first in PATH;
+// it returns the file the arguments go to.
+func fakeSeekTools(t *testing.T, framecrc string) string {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	ffmpeg := "#!/bin/sh\necho \"$@\" > " + argsFile + "\nprintf '#tb 0: 1/1000\\n" + framecrc + "\\n'\n"
+	ffprobe := "#!/bin/sh\nprintf '30.000000,N/A\\n'\n"
+	for name, script := range map[string]string{"ffmpeg": ffmpeg, "ffprobe": ffprobe} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := parseFirstPacketTime([]byte(c.out))
-			if c.err != (err != nil) || (!c.err && got != c.want) {
-				t.Fatalf("got %v, %v; want %v, err=%v", got, err, c.want, c.err)
-			}
-		})
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argsFile
+}
+
+// The copy route asks FFmpeg where its seek lands, with the run's own seek
+// options, not ffprobe: for a seek to 30 on an MKV with B-frames whose
+// keyframe at 30.000 is inside FFmpeg's 3/23 s heuristic, ffprobe names that
+// keyframe (the answer the fake ffprobe gives), while FFmpeg lands on the
+// one at 20.000 (the fake ffmpeg's framecrc: DTS -10.083 and PTS -10.000
+// from the seek). The run reports the keyframe's PTS: 20.000. Negative
+// control: probeRunStart back on ffprobe reports 30, on ffmpegSeekStart
+// (the DTS) 19.917.
+func TestCopyRouteRealStartIsFFmpegsFirstFrame(t *testing.T) {
+	argsFile := fakeSeekTools(t, "0,     -10083,    -10000,       41,     8075, 0x71caa088")
+	h := NewHLS("http://src/x.mkv", &cp.ProbeReply{Streams: []*cp.Stream{
+		{Index: 0, CodecType: "video", CodecName: "h264", Height: 360},
+		{Index: 1, CodecType: "audio", CodecName: "aac", Channels: 2},
+	}}, &HLSConfig{sm: Online, aacCodec: "libfdk_aac"})
+	run := newTranscodeRun("k", t.TempDir(), 30, "http://src/x.mkv", h)
+	run.resolveRealStartOnce()
+	if got := run.RealStart(); math.Abs(got-20) > 1e-9 {
+		t.Fatalf("copy route real start %v, want the keyframe's PTS by FFmpeg's seek, 20.000", got)
+	}
+	// The probe seeks exactly as the run will (copySeekInput in both).
+	b, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(b), strings.Join(copySeekInput(30), " ")+" -i http://src/x.mkv -map 0:0 ") {
+		t.Errorf("probe args %s", b)
+	}
+	runArgs := strings.Join(injectSeekParams([]string{"-fix_sub_duration", "-i", "http://src/x.mkv"}, 30, true), " ")
+	if runArgs != "-fix_sub_duration "+strings.Join(copySeekInput(30), " ")+" -i http://src/x.mkv" {
+		t.Errorf("run args %s", runArgs)
+	}
+}
+
+// The first frame is the packet's PTS, its DTS when it has none; the
+// passthrough answer on the same packet stays the earlier one (the DTS).
+func TestFFmpegSeekFirstFrame(t *testing.T) {
+	for _, c := range []struct {
+		line           string
+		frame, ptStart float64
+	}{
+		{"0,     -10083,    -10000,       41,     8075, 0x71caa088", 20, 19.917},
+		{"0, -9223372036854775808,    -10000,       41,     8075, 0x71caa088", 20, 20},
+		{"0,     -10083, -9223372036854775808,       41,     8075, 0x71caa088", 19.917, 19.917},
+		// The first keyframe of the file, two frames of B-frame delay.
+		{"0,     -30083,    -30000,       41,     8075, 0x71caa088", 0, -0.083},
+	} {
+		fakeSeekTools(t, c.line)
+		got, err := ffmpegSeekFirstFrame(context.Background(), "http://src/x.mkv", "0", 30)
+		if err != nil || math.Abs(got-c.frame) > 1e-9 {
+			t.Errorf("%q: first frame %v %v, want %v", c.line, got, err, c.frame)
+		}
+		got, err = ffmpegSeekStart(context.Background(), "http://src/x.mkv", "0", 30)
+		if err != nil || math.Abs(got-c.ptStart) > 1e-9 {
+			t.Errorf("%q: passthrough start %v %v, want %v", c.line, got, err, c.ptStart)
+		}
+	}
+	if _, err := ffmpegSeekFirstFrame(context.Background(), "-i", "0", 30); err == nil {
+		t.Error("a source that parses as an option was run")
 	}
 }
 

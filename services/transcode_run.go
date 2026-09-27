@@ -36,8 +36,9 @@ type TranscodeRun struct {
 	onRealStart func(key string, v float64)
 	// realStart is the movie time media time 0 of this run actually maps
 	// to. For a copy-mode video the input seek lands on the keyframe at or
-	// before seekTime (-noaccurate_seek), so the run starts up to a GOP
-	// earlier than the quantized value; every side-loaded subtitle track
+	// before seekTime (-noaccurate_seek; for an MKV with B-frames at or
+	// before seekTime - 3/23 s), so the run starts up to a GOP earlier
+	// than the quantized value; every side-loaded subtitle track
 	// shifted by the quantized offset then runs ahead of the sound by that
 	// difference (measured 1.657 s on stage). Resolved once per run by
 	// probeRunStart before FFmpeg is spawned. A separate resolved flag, not
@@ -679,8 +680,9 @@ func (r *TranscodeRun) resolveRealStart() (float64, string) {
 	}
 	probe := probeRunStart
 	if r.h != nil && r.h.passthrough {
-		// Where the run's own seek lands (its seek options differ from the
-		// copy route's, and ffprobe's seek is not FFmpeg's).
+		// The same seek, its own answer: a passthrough run counts from the
+		// first DTS (its -itsoffset), the copy route's TS from the first
+		// frame (ffmpegSeekFirstFrame).
 		probe = probePassthroughStart
 	}
 	k, err := probe(r.runCtx, r.sourceURL, stream, r.seekTime)
@@ -739,9 +741,11 @@ func injectSeekParams(params []string, seekSec float64, videoCopy bool) []string
 
 	for i := 0; i < len(params); i++ {
 		if params[i] == "-i" {
-			result = append(result, "-ss", seekStr)
 			if videoCopy {
-				result = append(result, "-noaccurate_seek")
+				// Exactly what probeRunStart asks FFmpeg with.
+				result = append(result, copySeekInput(seekSec)...)
+			} else {
+				result = append(result, "-ss", seekStr)
 			}
 		}
 		result = append(result, params[i])
