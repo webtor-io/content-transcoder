@@ -27,13 +27,10 @@ func RegisterPassthroughFlags(f []cli.Flag) []cli.Flag {
 	})
 }
 
-// passthroughBuildCodecs are the codecs this build can write as they are.
-// Empty until the fMP4 output side lands (fMP4 arguments, init, master from
-// the output init, serving .m4s): until then no configuration can turn
-// passthrough on, and the start-up line says why.
-//
-// TODO(passthrough output): add "hevc" together with the fMP4 output.
-var passthroughBuildCodecs = map[string]bool{}
+// passthroughBuildCodecs are the codecs this build can write as they are
+// (passthrough_output.go). A codec the configuration lists and this build
+// cannot write is left out, and the start-up line says so.
+var passthroughBuildCodecs = map[string]bool{"hevc": true}
 
 // passthroughKnownCodecs are the codec names the configuration may carry.
 var passthroughKnownCodecs = map[string]bool{"hevc": true}

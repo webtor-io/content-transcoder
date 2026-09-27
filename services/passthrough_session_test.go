@@ -33,12 +33,12 @@ func hevcHLS(t *testing.T, w, h int32, passthrough bool, cfg *HLSConfig) *HLS {
 	return hls
 }
 
-// standInPassthroughParams replaces the output-side stub for a test: the
+// standInPassthroughParams replaces the passthrough command for a test: the
 // run starts (under fakeFFmpeg) with recognisable arguments.
 func standInPassthroughParams(t *testing.T) {
 	t.Helper()
 	orig := buildPassthroughParams
-	buildPassthroughParams = func(h *HLS, in *url.URL, out string, _ ParamOptions) ([]string, error) {
+	buildPassthroughParams = func(h *HLS, in *url.URL, out string, _ ParamOptions, _ string) ([]string, error) {
 		return []string{"-i", in.String(), "-passthrough-stand-in", out + "/" + h.primary[0].GetPlaylistName() + ".ffmpeg"}, nil
 	}
 	t.Cleanup(func() { buildPassthroughParams = orig })
@@ -51,9 +51,10 @@ func standInPassthroughParams(t *testing.T) {
 func TestPassthroughRunIdentity(t *testing.T) {
 	fakeFFmpeg(t)
 	standInPassthroughParams(t)
-	orig := probeRunStart
+	orig, origPT := probeRunStart, probePassthroughStart
 	probeRunStart = func(_ context.Context, _ string, _ string, seek float64) (float64, error) { return seek - 3, nil }
-	t.Cleanup(func() { probeRunStart = orig })
+	probePassthroughStart = probeRunStart
+	t.Cleanup(func() { probeRunStart, probePassthroughStart = orig, origPT })
 
 	hashDir := t.TempDir()
 	old := hevcHLS(t, 1920, 1080, false, nil)
@@ -137,14 +138,19 @@ func TestPassthroughGate(t *testing.T) {
 		want error
 	}{
 		{"2160 old route", hevcHLS(t, 3840, 2160, false, nil), ErrResolutionNotSupported},
-		{"2160 passthrough", hevcHLS(t, 3840, 2160, true, nil), errPassthroughOutputPending},
+		{"2160 passthrough", hevcHLS(t, 3840, 2160, true, nil), nil},
 		{"transcoding disabled, old route", hevcHLS(t, 1920, 1080, false, disabled), ErrTranscodingDisabled},
-		{"transcoding disabled, passthrough", hevcHLS(t, 1920, 1080, true, disabled), errPassthroughOutputPending},
+		{"transcoding disabled, passthrough", hevcHLS(t, 1920, 1080, true, disabled), nil},
 	} {
-		_, err := c.h.GetFFmpegParams("/out")
+		_, err := c.h.ffmpegParamsFor("/out", ParamOptions{}, "0123456789abcdef")
 		if !errors.Is(err, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, err, c.want)
 		}
+	}
+	// A passthrough command names its files after its process: none
+	// without one.
+	if _, err := hevcHLS(t, 1920, 1080, true, nil).GetFFmpegParams("/out"); !errors.Is(err, errNoGeneration) {
+		t.Errorf("passthrough without a generation: %v", err)
 	}
 	// h264 over 1080p is copied, as it always was.
 	h := NewHLS("http://src/x.mkv", &cp.ProbeReply{Streams: []*cp.Stream{{Index: 0, CodecType: "video", CodecName: "h264", Width: 3840, Height: 2160}}}, &HLSConfig{sm: Online})

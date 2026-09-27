@@ -171,6 +171,13 @@ type HLS struct {
 	// here and not in ParamOptions because IsCopy, isVideoCopy and runMode
 	// read the streams, never the options.
 	passthrough bool
+	// passFacts is what the transcoder's own look found about the source
+	// video when the route was decided (passthrough sessions only): the
+	// hvcC the output's is compared with, and the transfer (VIDEO-RANGE).
+	passFacts *sourceHEVCFacts
+	// sourceBitRate is content-prober's average bit rate of the whole
+	// source, 0 when it has none (the passthrough master's BANDWIDTH).
+	sourceBitRate int64
 }
 
 // ParamOptions adjust a run's FFmpeg arguments beyond what the probe says.
@@ -194,6 +201,13 @@ func (h *HLS) GetFFmpegParams(out string) ([]string, error) {
 }
 
 func (h *HLS) GetFFmpegParamsWith(out string, opts ParamOptions) ([]string, error) {
+	return h.ffmpegParamsFor(out, opts, "")
+}
+
+// ffmpegParamsFor is the command of the run process of generation gen: a
+// passthrough command names its files after it (buildPassthroughParams);
+// the old route's does not use it.
+func (h *HLS) ffmpegParamsFor(out string, opts ParamOptions, gen string) ([]string, error) {
 
 	parsedURL, err := u.Parse(h.in)
 	if err != nil {
@@ -205,7 +219,7 @@ func (h *HLS) GetFFmpegParamsWith(out string, opts ParamOptions) ([]string, erro
 	// Passthrough copies the video: the gate below, which stands for "this
 	// video would have to be encoded", has nothing to say about it.
 	if h.passthrough {
-		return buildPassthroughParams(h, parsedURL, out, opts)
+		return buildPassthroughParams(h, parsedURL, out, opts, gen)
 	}
 	if h.primary[0].s.GetCodecType() == "video" {
 		if h.primary[0].s.GetCodecName() != "h264" {
@@ -298,6 +312,9 @@ type HLSStream struct {
 	cfg   *HLSConfig
 	// passthrough: the primary video of a passthrough session (HLS.passthrough).
 	passthrough bool
+	// fmp4: the stream goes out as HLS fMP4 (the video and the audio of a
+	// passthrough session): .m4s segments after an init segment.
+	fmp4 bool
 }
 
 func (h *HLSStream) GetPlaylistPath(out string) string {
@@ -422,6 +439,9 @@ func (h *HLSStream) GetSegmentExtension() string {
 	if h.st == Subtitle {
 		return "vtt"
 	}
+	if h.fmp4 {
+		return passthroughSegmentExt
+	}
 	return "ts"
 }
 
@@ -538,6 +558,11 @@ func NewHLS(in string, probe *cp.ProbeReply, cfg *HLSConfig) *HLS {
 			si++
 		}
 	}
+	if f := probe.GetFormat(); f != nil {
+		if br, err := strconv.ParseInt(f.GetBitRate(), 10, 64); err == nil && br > 0 {
+			h.sourceBitRate = br
+		}
+	}
 	if len(h.video) > 0 {
 		h.primary = h.video
 	} else if len(h.audio) > 0 {
@@ -644,7 +669,9 @@ func (h *HLS) primaryVideo() *HLSStream {
 
 // usePassthrough puts the session on the passthrough route. Only an Online
 // HLS (one video stream at the source's size) can take it; it reports
-// whether it did.
+// whether it did. The video and every audio track then go out as fMP4:
+// fMP4 video next to TS audio was never tried in a player, so they are not
+// mixed.
 func (h *HLS) usePassthrough() bool {
 	v := h.primaryVideo()
 	if v == nil || h.cfg == nil || h.cfg.sm != Online {
@@ -652,6 +679,10 @@ func (h *HLS) usePassthrough() bool {
 	}
 	h.passthrough = true
 	v.passthrough = true
+	v.fmp4 = true
+	for _, a := range h.audio {
+		a.fmp4 = true
+	}
 	return true
 }
 
@@ -682,26 +713,4 @@ func (h *HLS) videoRoute() string {
 		return videoRouteReencode
 	}
 	return videoRouteAudio
-}
-
-// errPassthroughOutputPending is what a passthrough session gets until the
-// fMP4 output side is built. It cannot be reached in a deployment: no
-// capability lists a codec this build cannot write (passthroughBuildCodecs).
-var errPassthroughOutputPending = errors.New("passthrough output is not built yet")
-
-// buildPassthroughParams is the FFmpeg command of a passthrough run.
-//
-// STUB -- the output side of passthrough, to be filled in with it:
-// `-ss <realStart>` on a seek; video `-map 0:<i> -c:v copy -bsf:v
-// hevc_mp4toannexb -tag:v hvc1` (codecParams) into `-f hls -hls_time 4
-// -hls_list_size 0 -hls_playlist_type event -hls_segment_type fmp4
-// -hls_flags temp_file -hls_fmp4_init_filename v0-<h>-init-<gen>.mp4
-// -hls_segment_filename <out>/v0-<h>-%d.m4s <out>/v0-<h>.m3u8.ffmpeg`, audio
-// the same way into a<i>-init-<gen>.mp4 / a<i>-%d.m4s, subtitles unchanged.
-// The playlists must stay <out>/<stream playlist>.ffmpeg with EXTINF per
-// segment and segment names ending in -<n>: passthrough pacing
-// (pacing_media.go) and watchFirstSegment read exactly those. A variable so
-// tests can stand in for it.
-var buildPassthroughParams = func(h *HLS, in *u.URL, out string, opts ParamOptions) ([]string, error) {
-	return nil, errPassthroughOutputPending
 }

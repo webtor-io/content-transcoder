@@ -169,6 +169,9 @@ const (
 type routeDecision struct {
 	passthrough bool
 	reason      string
+	// facts are what the source probe found, for a passthrough decision:
+	// the output's hvcC is checked against the source's it was made on.
+	facts *sourceHEVCFacts
 }
 
 func oldRoute(reason string) routeDecision { return routeDecision{reason: reason} }
@@ -266,7 +269,7 @@ func routeForFacts(src sourceVideo, decl viewerDeclaration, f sourceHEVCFacts) r
 	if f.ColorTransfer == transferHLG {
 		return oldRoute(reasonHLGLater)
 	}
-	return routeDecision{passthrough: true, reason: reasonOK}
+	return routeDecision{passthrough: true, reason: reasonOK, facts: &f}
 }
 
 // FFmpeg's names of the transfer characteristics that matter here.

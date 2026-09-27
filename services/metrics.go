@@ -221,6 +221,11 @@ var (
 		Help:      "Time of the transcoder's own look at an HEVC source before passthrough, retries included, by result (ok, failed); cached results are not counted.",
 		Buckets:   sourceProbeBuckets,
 	}, []string{"result"})
+	metricPassthroughCodecsMismatch = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsNamespace,
+		Name:      "passthrough_codecs_mismatch_total",
+		Help:      "Passthrough master playlists whose output HEVC configuration (the init's hvcC, which CODECS is built from) differs from the source's the route was decided on, by field (profile, tier, level); unbuildable when the init gave no CODECS at all and the master was refused. Expected 0.",
+	}, []string{"field"})
 	metricSessionSegmentsServed = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: metricsNamespace,
 		Name:      "session_segments_served",
@@ -266,6 +271,9 @@ func init() {
 	}
 	for _, r := range []string{videoRoutePassthrough, videoRouteCopy, videoRouteReencode, videoRouteAudio} {
 		metricSessionSegmentsServed.WithLabelValues(r)
+	}
+	for _, f := range []string{codecsMismatchProfile, codecsMismatchTier, codecsMismatchLevel, codecsMismatchUnbuildable} {
+		metricPassthroughCodecsMismatch.WithLabelValues(f)
 	}
 	// The route series a dashboard compares from the first scrape: every
 	// reason on the two routes it can end in, the reasons a copy or audio

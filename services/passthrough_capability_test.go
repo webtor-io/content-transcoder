@@ -182,13 +182,23 @@ func TestPassthroughCapability_FlagOnly(t *testing.T) {
 	}
 }
 
-// This build has no passthrough output yet: configuring hevc leaves it
-// off, and the start-up line says why.
-func TestPassthroughCapability_ThisBuildCannotPassThrough(t *testing.T) {
+// This build writes hevc as it is: configured, it is on. A codec the build
+// cannot write stays off, and the start-up line says why.
+func TestPassthroughCapability_BuildAllowlist(t *testing.T) {
 	hook := logtest.NewGlobal()
 	defer hook.Reset()
+	if !newPassthroughCapabilitySource("hevc", "").Current().has("hevc") {
+		t.Fatal("hevc configured and off in a build with the output side")
+	}
+	if got := capabilityLines(hook); len(got) != 1 || got[0] != "HEVC passthrough: on" {
+		t.Errorf("start-up line %q", got)
+	}
+	hook.Reset()
+	orig := passthroughBuildCodecs
+	passthroughBuildCodecs = map[string]bool{}
+	defer func() { passthroughBuildCodecs = orig }()
 	if newPassthroughCapabilitySource("hevc", "").Current().has("hevc") {
-		t.Fatal("hevc on in a build without the output side")
+		t.Fatal("hevc on in a build that cannot write it")
 	}
 	if got := capabilityLines(hook); len(got) != 1 || got[0] != "HEVC passthrough: off ignored=hevc" {
 		t.Errorf("start-up line %q", got)

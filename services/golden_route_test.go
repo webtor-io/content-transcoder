@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // capabilityWith is a capability source holding codecs whatever this build
@@ -99,8 +100,9 @@ func TestGolden_OldRouteUnchanged(t *testing.T) {
 }
 
 // Negative control for the replay: a session that does get passthrough is
-// not the old route, and the comparison sees it. (The output side is a stub
-// until it is built; a stand-in gives the run arguments.)
+// not the old route, and the comparison sees it. A stand-in gives the run
+// recognisable arguments; the fake FFmpeg writes no init, so the master of
+// the passthrough session is not answered (a short wait instead of 5 min).
 func TestGolden_ReplayNoticesARouteChange(t *testing.T) {
 	b, err := os.ReadFile(goldenRecordPath)
 	if err != nil {
@@ -111,10 +113,16 @@ func TestGolden_ReplayNoticesARouteChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	orig := buildPassthroughParams
-	buildPassthroughParams = func(h *HLS, in *url.URL, out string, _ ParamOptions) ([]string, error) {
+	buildPassthroughParams = func(h *HLS, in *url.URL, out string, _ ParamOptions, _ string) ([]string, error) {
 		return []string{"-i", in.String(), "-passthrough-stand-in", out}, nil
 	}
-	t.Cleanup(func() { buildPassthroughParams = orig })
+	origWait, origStart := passthroughMasterTimeout, probePassthroughStart
+	passthroughMasterTimeout = 100 * time.Millisecond
+	// The fake FFmpeg cannot say where a seek lands.
+	probePassthroughStart = func(_ context.Context, _ string, _ string, seek float64) (float64, error) { return seek - 2.5, nil }
+	t.Cleanup(func() {
+		buildPassthroughParams, passthroughMasterTimeout, probePassthroughStart = orig, origWait, origStart
+	})
 	const passing = "hevc-1080-main10-aac"
 	configure := func(w *Web) {
 		w.hlsBuilder.passthrough = capabilityWith("hevc")

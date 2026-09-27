@@ -81,6 +81,7 @@ Session API:
 - `GET /session/{id}/index.m3u8` — Master playlist
 - `GET /session/{id}/{stream}.m3u8` — Variant playlist (polls .ffmpeg file)
 - `GET /session/{id}/{segment}.ts` — Segment file (auto-restarts FFmpeg if needed)
+- `GET /session/{id}/{segment}.m4s`, `GET /session/{id}/{stream}-init-{gen}.mp4` — fMP4 segment and init of a passthrough session (HEVC as it is); 404 on the old route. See docs/session-transcoding.md, Passthrough output
 
 Player:
 - `GET /player/?source_url=` — Web player UI (when `--player=true`)
@@ -93,6 +94,7 @@ Depends on codec mode:
 |------|---------------|-------|-----------|
 | **Copy** (h264 source) | Before `-i` | `-ss T -noaccurate_seek -i URL` | Fast input-level seek; `-noaccurate_seek` starts both video and audio from same keyframe for A/V sync |
 | **Re-encode** (mpeg4, vp9, etc.) | Before `-i` | `-ss T -i URL` | Input seek to the keyframe before T, then accurate decode up to T; `-xerror` is dropped on seeks |
+| **Passthrough** (HEVC → fMP4) | Before `-i` | `-seek_timestamp 1 -ss T -noaccurate_seek -itsoffset T-R -i URL` | The copy seek; R is where FFmpeg's own seek lands (probed with FFmpeg, not ffprobe), and every output counts from it, subtitles included |
 
 ### Output Directory Structure
 

@@ -79,12 +79,13 @@ type TranscodeRun struct {
 	started time.Time
 
 	// generation names the FFmpeg process whose files are in outputDir. A
-	// new process gets a new one (watchProcessLocked): a restart writes the
-	// segments again, from zero, under the same names. Segment validators
-	// are made of it (segmentETag), so a copy of a file written by another
-	// process -- of another run, or an earlier one of this run -- never
-	// validates. Set at construction too, so no run is without one. Guarded
-	// by mu.
+	// new process gets a new one, made before its arguments (startLocked):
+	// a restart writes the segments again, from zero, under the same names,
+	// and a passthrough process's init segments carry it in their names.
+	// Segment validators are made of it (segmentETag), so a copy of a file
+	// written by another process -- of another run, or an earlier one of
+	// this run -- never validates. Set at construction too, so no run is
+	// without one. Guarded by mu.
 	generation string
 
 	// fallbacks are the ParamOptions this source turned out to need: set
@@ -227,7 +228,10 @@ func (r *TranscodeRun) startLocked() error {
 		return errors.Wrap(err, "failed to create run dir")
 	}
 
-	params, err := r.h.GetFFmpegParamsWith(r.outputDir, r.fallbacks)
+	// The process's generation exists before its arguments: a passthrough
+	// run names its init segments after it (passthrough_output.go).
+	gen := newRunGeneration()
+	params, err := r.h.ffmpegParamsFor(r.outputDir, r.fallbacks, gen)
 	if err != nil {
 		return errors.Wrap(err, "failed to get ffmpeg params")
 	}
@@ -235,7 +239,18 @@ func (r *TranscodeRun) startLocked() error {
 	params = redirectSegmentListParams(params)
 
 	if r.seekTime > 0 {
-		params = injectSeekParams(params, r.seekTime, r.isVideoCopy())
+		if r.h.passthrough {
+			// resolveRealStartOnce ran before the lock (Start); without an
+			// answer the real start is the quantized seek, and the run
+			// behaves as a copy run's seek does.
+			realStart := r.seekTime
+			if r.realStartResolved {
+				realStart = r.realStart
+			}
+			params = injectPassthroughSeekParams(params, r.seekTime, realStart)
+		} else {
+			params = injectSeekParams(params, r.seekTime, r.isVideoCopy())
+		}
 		// Remove -xerror when seeking: AVI and other containers may produce
 		// non-fatal errors during seek that -xerror would treat as fatal.
 		params = removeParam(params, "-xerror")
@@ -277,7 +292,7 @@ func (r *TranscodeRun) startLocked() error {
 		"pid":      r.cmd.Process.Pid,
 		"seekTime": fmt.Sprintf("%.3f", r.seekTime),
 	}).Info("run: ffmpeg started")
-	r.watchProcessLocked(outLog, errLog)
+	r.watchProcessGenLocked(gen, outLog, errLog)
 
 	return nil
 }
@@ -287,10 +302,16 @@ func (r *TranscodeRun) startLocked() error {
 // once it is gone. Caller holds mu. Split from startLocked so a test can
 // put any process where FFmpeg goes and exercise the same bookkeeping.
 func (r *TranscodeRun) watchProcessLocked(closers ...io.Closer) {
+	r.watchProcessGenLocked(newRunGeneration(), closers...)
+}
+
+// watchProcessGenLocked is watchProcessLocked for a process whose
+// generation was made before it started (startLocked).
+func (r *TranscodeRun) watchProcessGenLocked(gen string, closers ...io.Closer) {
 	r.running = true
 	r.stopReason = ""
 	r.started = time.Now()
-	r.generation = newRunGeneration()
+	r.generation = gen
 	r.demand = -1
 	r.mediaDemand = nil
 	r.pausedFor = 0
@@ -640,7 +661,13 @@ func (r *TranscodeRun) resolveRealStart() float64 {
 			stream = sp
 		}
 	}
-	k, err := probeRunStart(r.runCtx, r.sourceURL, stream, r.seekTime)
+	probe := probeRunStart
+	if r.h != nil && r.h.passthrough {
+		// Where the run's own seek lands (its seek options differ from the
+		// copy route's, and ffprobe's seek is not FFmpeg's).
+		probe = probePassthroughStart
+	}
+	k, err := probe(r.runCtx, r.sourceURL, stream, r.seekTime)
 	if err != nil {
 		r.logger.WithError(err).Warn("run: failed to resolve the real start, reporting the quantized seek")
 		return r.seekTime

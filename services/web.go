@@ -352,6 +352,9 @@ func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclarati
 		// pass anything through.
 		route = oldRoute(reasonPassthroughOff)
 	}
+	if hls.passthrough {
+		hls.passFacts = route.facts
+	}
 	// Content with neither video nor audio is refused before a session
 	// exists: GetFFmpegParams would refuse it too, but only when FFmpeg is
 	// started, and the legacy route opens a session without starting it
@@ -374,11 +377,14 @@ func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclarati
 		s.sessionManager.Close(sess.id)
 		return nil, route, http.StatusInternalServerError, "failed to create session dir"
 	}
-	// TODO(passthrough output): a passthrough master is written from the
-	// first process's init (CODECS of the output hvcC), not here.
-	if err := hls.MakeMasterPlaylist(sess.outputDir); err != nil {
-		s.sessionManager.Close(sess.id)
-		return nil, route, http.StatusInternalServerError, "failed to create master playlist"
+	// A passthrough master is written from the init of the run's first
+	// process (CODECS of the output's hvcC), when it is first asked for
+	// (sessionPlaylistHandler).
+	if !hls.passthrough {
+		if err := hls.MakeMasterPlaylist(sess.outputDir); err != nil {
+			s.sessionManager.Close(sess.id)
+			return nil, route, http.StatusInternalServerError, "failed to create master playlist"
+		}
 	}
 
 	if !start {
@@ -500,8 +506,8 @@ func (s *Web) legacyPlaylistHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "master playlist not found", http.StatusNotFound)
 		return
 	}
-	data = prefixPlaylistRefs(data, "session/"+sess.id+"/")
-	data = enrichPlaylistData(data, r.URL.RawQuery)
+	data = prefixPlaylistRefsFor(sess.h, data, "session/"+sess.id+"/")
+	data = enrichPlaylistDataFor(sess.h, data, r.URL.RawQuery)
 	// Every hit opens a session, so the answer is specific to it.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
@@ -627,6 +633,12 @@ func (s *Web) sessionRouter(w http.ResponseWriter, r *http.Request) {
 		s.sessionPlaylistHandler(w, r, sess, safeName)
 	case strings.HasSuffix(safeName, ".ts") || strings.HasSuffix(safeName, ".vtt"):
 		s.sessionSegmentHandler(w, r, sess, safeName)
+	// A passthrough session's fMP4 files; the old route has none, and any
+	// other .m4s or .mp4 is not found, as before.
+	case sess.h.ownsSegment(safeName):
+		s.sessionSegmentHandler(w, r, sess, safeName)
+	case sess.h.fmp4Stream(initStreamPrefix(safeName)) != nil:
+		s.sessionInitHandler(w, r, sess, safeName)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -756,6 +768,9 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 	var err error
 
 	if name == "index.m3u8" {
+		if sess.h != nil && sess.h.passthrough && !s.passthroughMaster(w, r, sess) {
+			return
+		}
 		data, err = sessionMasterPlaylist(sess)
 		if err != nil {
 			http.Error(w, "master playlist not found", http.StatusNotFound)
@@ -822,7 +837,7 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 
 	// Enrich: append query params (api-key, token, etc.) to all file
 	// references so subsequent requests carry the same auth context.
-	data = enrichPlaylistData(data, r.URL.RawQuery)
+	data = enrichPlaylistDataFor(sess.h, data, r.URL.RawQuery)
 
 	// Same reason as segments, and playlists move even faster: a variant grows
 	// with every segment produced and is replaced wholesale after a seek.
@@ -944,6 +959,11 @@ func (s *Web) serveSegment(w http.ResponseWriter, r *http.Request, sess *Session
 	}
 	sess.notePrimaryServed(filename)
 	w.Header().Set("ETag", segmentETag(generation, fi.Size()))
+	if strings.HasSuffix(filename, "."+passthroughSegmentExt) {
+		// Go's table has no .m4s, the image has no /etc/mime.types, and
+		// sniffing an fMP4 segment (styp) finds nothing.
+		w.Header().Set("Content-Type", "video/mp4")
+	}
 	// Exactly the bytes the ETag names: FFmpeg may still be appending.
 	http.ServeContent(w, r, filename, time.Time{}, io.NewSectionReader(f, 0, fi.Size()))
 }

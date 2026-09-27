@@ -74,10 +74,67 @@ the client only declares what it decodes.
   declaration, arguments, playlists, refusals and run layout are byte for
   byte those of 1b25e28 (`golden_old_route_test.go` records them there,
   `golden_route_test.go` replays them).
-- **Output side.** The fMP4 output (arguments, init with the process
-  generation, master from the output hvcC, serving `.m4s` and the init) is
-  a stub (`buildPassthroughParams`) until it is built; until then no
-  configuration can select passthrough.
+- **Output** (`services/passthrough_output.go`, `passthrough_web.go`), see
+  [Passthrough output](#passthrough-output).
+
+#### Passthrough output
+
+- **Command** (`buildPassthroughParams`). The input side is the old
+  route's. The video and every audio track go through FFmpeg's hls muxer as
+  fMP4 (fMP4 video next to TS audio was never tried in a player, so they are
+  not mixed): `-map 0:<i> <codec> -f hls -hls_time 4 -hls_list_size 0
+  -hls_playlist_type event -hls_segment_type fmp4 -hls_flags temp_file
+  -hls_fmp4_init_filename <prefix>-init-<gen>.mp4 -hls_segment_filename
+  <run>/<prefix>-%d.m4s <run>/<prefix>.m3u8.ffmpeg`. Video
+  `-c:v copy -bsf:v hevc_mp4toannexb -tag:v hvc1` (parameter sets out of the
+  samples, hvc1 for Apple), audio copied or encoded as on the old route.
+  Subtitles exactly as on the old route (segment muxer, webvtt). The video
+  is cut at keyframes only.
+- **Init named after the process.** `<gen>` is the run process's generation,
+  made before its arguments (`startLocked`). A restart reuses the run
+  directory, and hlsenc opens the init when it starts and fills it only at
+  its first cut: under a fixed name the new process would empty the init the
+  previous playlist still names. hlsenc writes the init whole and closes it
+  at the first cut before that cut's segment and playlist.
+- **Seek** — see [Passthrough Mode](#passthrough-mode-hevc--fmp4).
+- **Master** (`writePassthroughMaster`). Not written at POST /session: the
+  first request for `index.m3u8` restarts a stopped run (`EnsureRunning`),
+  waits (up to 5 min) until the video init of the run's current process is
+  complete, and writes the master from it: `CODECS` from the init's hvcC
+  (`hevcCodecString`, ISO/IEC 14496-15 Annex E — `hevc_mp4toannexb`
+  rebuilds the record, so not the source's), `mp4a.40.2` when there is
+  audio, `RESOLUTION` from content-prober, `VIDEO-RANGE=PQ` for a
+  `smpte2084` source (else `SDR`), `BANDWIDTH` = the larger of the source's
+  average bit rate and the first video segment's rate plus 192 kb/s of
+  audio. A profile, tier or level that differs from the source's the route
+  was decided on is counted (`passthrough_codecs_mismatch_total{field}`);
+  an init no CODECS can be read from is counted as `unbuildable` and the
+  master is answered 500 — a guessed CODECS fails in the player at once.
+  Written once, atomically; later reads serve it with the session's
+  `#EXT-X-SESSION-OFFSET` like the old master.
+- **Media playlists** come from hlsenc as they are (VERSION 7, EVENT,
+  `#EXT-X-MAP:URI="<prefix>-init-<gen>.mp4"`) and get the usual treatment
+  (`PlaylistForStream`: ENDLIST only once the run completed,
+  `#EXT-X-START`, `#EXT-X-SESSION-OFFSET`). The client's query is appended
+  to every reference, the MAP URI included, by a token pattern with
+  boundaries (`passthroughRefPattern`): the old, unanchored pattern finds
+  nothing in an init name whose generation ends in, say, `e90` (the init
+  would go out without the token) and a partial `a12.mp4` in one ending in
+  `a12`. Old-route playlists keep the old pattern, byte for byte.
+- **Serving.** Only a passthrough session answers `.m4s` (its own streams'
+  segments, through the segment handler: demand, restart, `ETag`) and
+  `<prefix>-init-<16 hex>.mp4`; anything else ending in `.mp4` or `.m4s` is
+  404, as before. Both go out as `video/mp4`, set explicitly (Go has no
+  `.m4s`, the image has no `/etc/mime.types`). An init has its own branch
+  before any segment logic (an all-digit generation would parse as a segment
+  number): no demand, no restart for a segment; `EnsureRunning` like a
+  playlist. It is served only complete: the running process's once its
+  playlist names it (waiting up to 10 s, then 404), an earlier process's
+  if it has bytes (else 404 at once). Its `ETag` is the generation in its
+  name and its size.
+- **Cleanup.** Init files of earlier processes stay in the run directory
+  (a few KB each, at most one per restart) and go with it when the run is
+  cleaned up.
 
 ### Seek (POST /session/{id}/seek?t=...)
 
@@ -100,7 +157,7 @@ A session URL outlives the run behind it. `/session/{id}/v0-720-0.ts` means "seg
 
 What a revalidation returns depends on the validator:
 
-- **Segments (`.ts`, `.vtt`)** carry `ETag: "<generation>-<size hex>"`. The generation is a random name given to each FFmpeg process of a run (`TranscodeRun.generation`, renewed in `watchProcessLocked`).
+- **Segments (`.ts`, `.vtt`, `.m4s`)** carry `ETag: "<generation>-<size hex>"`. The generation is a random name given to each FFmpeg process of a run (`TranscodeRun.generation`, made for each process before its arguments). A passthrough init carries the generation in its name, and its `ETag` names that one.
   - Within one process a segment file is written once and only appended to, so its size identifies its state. A copy taken while FFmpeg was still writing therefore does not validate the finished file.
   - Any other run, or another process of the same run (an auto-restart rewrites the files from 0), has a different generation. A copy from it never validates, even when the sizes match. Audio and subtitle segments of two runs can match to the byte.
   - `If-None-Match` within one process returns 304, as cheap as before.
@@ -249,6 +306,48 @@ ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ...
   - timestamps (`Non-monotonic DTS` / `Invalid DTS` under `-xerror`) → `Lenient`, which drops `-xerror`;
   - `Scalable configurations are not allowed in ADTS` → `EncodeAudio`, which re-encodes AAC the probe would copy.
 
+### Passthrough Mode (HEVC → fMP4)
+
+```
+ffmpeg -seek_timestamp 1 -ss {quantized} -noaccurate_seek -itsoffset {quantized - realStart} -i {url} ... -c:v copy ...
+```
+
+- The input seek is the copy route's, at the quantized time, with `-ss`
+  read as an absolute timestamp (`-seek_timestamp 1`), as the start probe
+  reads it.
+- **Not `-ss {realStart}`.** FFmpeg's input seek goes back to the keyframe
+  at or before the target. For a format without `AVFMT_SEEK_TO_PTS`
+  (matroska) that has B-frames, it first takes 3/23 s off the target
+  (`fftools/ffmpeg_demux.c`, `dts_heuristic`). So `-ss` at the keyframe
+  itself lands a whole GOP earlier. Measured on 8.1.2 with 10 s GOPs:
+  `-ss 20.020` on an MKV keyframe at 20.020, and `-ss 19.770` on an MP4
+  keyframe with that DTS, both started at 10.010.
+- **`realStart`** is resolved with FFmpeg itself (`ffmpegSeekStart`), not
+  ffprobe. It uses the run's seek options plus `-copyts -frames:v 1 -f
+  framecrc`, and reads the earlier of the first packet's DTS and PTS.
+  ffprobe's seek has no dts heuristic, so it names a keyframe the run does
+  not start at whenever one lies in the last 3/23 s before the seek point.
+  Example: a seek to 30 on a 25 fps, 10 s GOP MKV. ffprobe says 30.000,
+  FFmpeg starts at 20.000. ffprobe also has no DTS for matroska, where
+  FFmpeg guesses one: 19.937 for a keyframe at 20.020 with two frames of
+  B-frame delay.
+- **`-itsoffset`** moves every output's zero from the quantized time to
+  `realStart`. The video's first DTS is 0, so its output shifts nothing, and
+  subtitles count from the same zero. Measured on 8.1.2, cues at 21 s and
+  26 s after a seek to 30 over that MKV keyframe:
+  - with the offset: 1.063 and 6.063;
+  - without it: 0.000 and 5.000 (each output shifts its own negative
+    timestamps away).
+- If the probe does not answer, `realStart` is the quantized time and the
+  offset is 0: the copy route's behaviour.
+- **Audio against video.** movenc writes each fMP4 track's `tfdt` from that
+  track's own first sample (`movenc.c`, `mov_write_tfdt_tag`: `dts -
+  start_dts`) and keeps the track's start only in its edit list. A player
+  that ignores edit lists (hls.js) therefore starts the audio early by
+  (first audio sample − first video DTS). Measured: 83–95 ms on the
+  synthetic x265 sources, the B-frame delay. That is inherent to FFmpeg's
+  fMP4 and not changed here; it belongs to the browser matrix.
+
 ## Player (player/index.html)
 
 The HLS.js-based player manages sessions:
@@ -280,6 +379,13 @@ The player tracks `seekOffset` — the quantized seek position. Displayed time =
         ffmpeg.out, ffmpeg.err     # FFmpeg logs
       seek-480.000/                # Shared run: transcoding from 480s
         ...
+      hevc-seek-0.000/             # Passthrough run from 0s
+        v0-2160-init-{gen}.mp4     # Video init of process {gen} (one per process)
+        v0-2160-0.m4s              # Video segments (cut at keyframes)
+        a0-init-{gen}.mp4, a0-0.m4s  # Audio, fMP4 too
+        s0-0.vtt                   # Subtitles as on the old route
+        v0-2160.m3u8.ffmpeg        # hlsenc's playlist (#EXT-X-MAP names the init)
+        ffmpeg.out, ffmpeg.err
 ```
 
 ## Key Constants
@@ -313,6 +419,7 @@ the prom port (8083, `--use-prom`, `httpprom` in the chart). Namespace
 | `video_route_total{route,reason}` | POST /session answers by route (`passthrough`, `copy`, `reencode`, `audio`; `refused` for a 415 or the 503 of a failed check, `error` otherwise) and reason |
 | `source_probe_seconds{result}` | The passthrough source probe, retries included, `ok`/`failed`; cached results excluded |
 | `session_segments_served{route}` | Primary segments served to a session, observed when it is removed (sessions that never started a run are not observed) |
+| `passthrough_codecs_mismatch_total{field}` | Passthrough masters whose output hvcC differs from the source's the route was decided on (`profile`, `tier`, `level`), or whose init gave no CODECS (`unbuildable`, master refused). Expected 0 |
 
 Run metrics with a `mode` label (`run_first_segment_seconds`, `run_speed`,
 `run_pause_seconds_total`, `run_resume_segment_seconds`,
