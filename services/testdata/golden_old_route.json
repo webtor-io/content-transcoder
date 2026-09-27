@@ -40,6 +40,9 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=1,CODECS=\"avc1.42e00a,mp4a.40.2\"\na0.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\na0-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\na0-1.ts?api-key=K\u0026token=T\n",
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -159,6 +162,9 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=1,CODECS=\"avc1.42e00a,mp4a.40.2\"\na0.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\na0-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\na0-1.ts?api-key=K\u0026token=T\n",
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -329,6 +335,13 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=8000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nv0-1080.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-1080-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-1080-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-1080-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -562,6 +575,13 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1 (eng)\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=8000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nv0-1080.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-1080-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-1080-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-1080-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":597.500}",
       "seek_args": [
         "-filter_threads",
@@ -771,6 +791,15 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Surround (eng)\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",LANGUAGE=\"rus\",NAME=\"Subtitle #1 (rus)\",URI=\"s0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",LANGUAGE=\"eng\",NAME=\"Subtitle #2\",URI=\"s1.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=8000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\",SUBTITLES=\"subtitles\"\nv0-2160.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-2160-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-2160-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n",
+        "s0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\ns0-0.vtt?api-key=K\u0026token=T\n",
+        "s1.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\ns1-0.vtt?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-2160-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":597.500}",
       "seek_args": [
         "-filter_threads",
@@ -1048,6 +1077,13 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=8000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nv0-1080.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-1080-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-1080-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-1080-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -1299,6 +1335,13 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=8000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nv0-1080.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-1080-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-1080-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-1080-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -1583,6 +1626,16 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"jpn\",NAME=\"Track #2 (jpn)\",URI=\"a1.m3u8?api-key=K\u0026token=T\"\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",LANGUAGE=\"eng\",NAME=\"Subtitle #1\",URI=\"s0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subtitles\",LANGUAGE=\"eng\",NAME=\"Subtitle #2 (eng)\",URI=\"s1.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=5666000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\",SUBTITLES=\"subtitles\"\nv0-800.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-800-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-800-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n",
+        "a1.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na1-0.ts?api-key=K\u0026token=T\n",
+        "s0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n",
+        "s1.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\ns1-0.vtt?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-800-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -1907,6 +1960,13 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=5000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nv0-720.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-720-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-720-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-720-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -2155,6 +2215,13 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=3500000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nv0-576.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-576-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-576-1.ts?api-key=K\u0026token=T\n",
+      "media": {
+        "a0.m3u8": "200\n#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\na0-0.ts?api-key=K\u0026token=T\n"
+      },
+      "segments": {
+        "a0-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f",
+        "v0-576-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",
@@ -2396,6 +2463,9 @@
       ],
       "master": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=5000000,CODECS=\"avc1.42e00a,mp4a.40.2\"\nv0-720.m3u8?api-key=K\u0026token=T\n",
       "variant": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-START:TIME-OFFSET=0\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.004000,\nv0-720-0.ts?api-key=K\u0026token=T\n#EXTINF:4.004000,\nv0-720-1.ts?api-key=K\u0026token=T\n",
+      "segments": {
+        "v0-720-0.ts": "200\nAccept-Ranges: bytes\nAccess-Control-Allow-Headers: Content-Type\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-cache\nContent-Length: 376\nContent-Type: video/mp2t\nEtag: \"\u003cGEN\u003e-178\"\nbody sha1 ea29539acc1b7419fafb2dd3d2459484dd04456f"
+      },
       "seek_body": "{\"ok\":true,\"offset\":600.000}",
       "seek_args": [
         "-filter_threads",

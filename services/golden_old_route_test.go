@@ -114,18 +114,24 @@ var goldenSources = []goldenSource{
 
 // goldenRecord is everything the old route answered for one source.
 type goldenRecord struct {
-	PostStatus  int      `json:"post_status"`
-	PostBody    string   `json:"post_body,omitempty"`
-	PostJSON    string   `json:"post_json,omitempty"` // id and duration of a 200
-	StartArgs   []string `json:"start_args,omitempty"`
-	Master      string   `json:"master,omitempty"`
-	Variant     string   `json:"variant,omitempty"`
-	SeekBody    string   `json:"seek_body,omitempty"`
-	SeekArgs    []string `json:"seek_args,omitempty"`
-	LegacyCode  int      `json:"legacy_status"`
-	LegacyBody  string   `json:"legacy_body"`
-	LegacyArgs  []string `json:"legacy_args,omitempty"`
-	LegacyError string   `json:"legacy_error,omitempty"`
+	PostStatus int      `json:"post_status"`
+	PostBody   string   `json:"post_body,omitempty"`
+	PostJSON   string   `json:"post_json,omitempty"` // id and duration of a 200
+	StartArgs  []string `json:"start_args,omitempty"`
+	Master     string   `json:"master,omitempty"`
+	Variant    string   `json:"variant,omitempty"`
+	// Media are the audio and subtitle playlists as served (status, then
+	// body), Segments the answer to the first primary and audio segment
+	// (status, headers with the run's generation normalized, body hash),
+	// by name.
+	Media       map[string]string `json:"media,omitempty"`
+	Segments    map[string]string `json:"segments,omitempty"`
+	SeekBody    string            `json:"seek_body,omitempty"`
+	SeekArgs    []string          `json:"seek_args,omitempty"`
+	LegacyCode  int               `json:"legacy_status"`
+	LegacyBody  string            `json:"legacy_body"`
+	LegacyArgs  []string          `json:"legacy_args,omitempty"`
+	LegacyError string            `json:"legacy_error,omitempty"`
 }
 
 type goldenFile struct {
@@ -253,6 +259,40 @@ func goldenRun(t *testing.T, web *Web, sm *SessionManager, out string, src golde
 		w = serve(http.MethodGet, "/session/"+id+"/"+primary+"?"+auth)
 		rec.Variant = norm(w.Body.String())
 
+		// The audio and subtitle playlists, from lists as FFmpeg's segment
+		// muxer writes them (a subtitle without output never has one).
+		for _, m := range append(append([]*HLSStream{}, sess.h.audio...), sess.h.subs...) {
+			if rec.Media == nil { // none for a source without: as the record reads back
+				rec.Media = map[string]string{}
+			}
+			name := m.GetPlaylistName()
+			pl := fmt.Sprintf("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-ALLOW-CACHE:YES\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000000,\n%s-0.%s\n",
+				strings.TrimSuffix(name, ".m3u8"), m.GetSegmentExtension())
+			if err := os.WriteFile(filepath.Join(sess.run.OutputDir(), name+".ffmpeg"), []byte(pl), 0644); err != nil {
+				t.Fatal(err)
+			}
+			w = serve(http.MethodGet, "/session/"+id+"/"+name+"?"+auth)
+			rec.Media[name] = fmt.Sprintf("%d\n%s", w.Code, norm(w.Body.String()))
+		}
+		// A segment of the primary stream and of the first audio track.
+		rec.Segments = map[string]string{}
+		segs := []*HLSStream{sess.h.primary[0]}
+		if len(sess.h.audio) > 0 && sess.h.audio[0] != sess.h.primary[0] {
+			segs = append(segs, sess.h.audio[0])
+		}
+		for _, m := range segs {
+			name := strings.TrimSuffix(m.GetPlaylistName(), ".m3u8") + "-0." + m.GetSegmentExtension()
+			body := make([]byte, 376)
+			for i := range body {
+				body[i] = byte(0x47 + i%7)
+			}
+			if err := os.WriteFile(filepath.Join(sess.run.OutputDir(), name), body, 0644); err != nil {
+				t.Fatal(err)
+			}
+			w = serve(http.MethodGet, "/session/"+id+"/"+name+"?"+auth)
+			rec.Segments[name] = goldenResponse(w, sess.run.Generation())
+		}
+
 		w = serve(http.MethodPost, "/session/"+id+"/seek?t=615&"+auth)
 		rec.SeekBody = w.Body.String()
 		sess = sm.Get(id)
@@ -277,6 +317,25 @@ func goldenRun(t *testing.T, web *Web, sm *SessionManager, out string, src golde
 		}
 	}
 	return rec
+}
+
+// goldenResponse is a response as the record keeps it: the status, every
+// header but the date (the run's generation, random, as <GEN>), and the
+// body's hash.
+func goldenResponse(w *httptest.ResponseRecorder, gen string) string {
+	var keys []string
+	for k := range w.Header() {
+		if k != "Date" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	lines := []string{fmt.Sprint(w.Code)}
+	for _, k := range keys {
+		lines = append(lines, k+": "+strings.ReplaceAll(strings.Join(w.Header()[k], ","), gen, "<GEN>"))
+	}
+	sum := sha1.Sum(w.Body.Bytes())
+	return strings.Join(append(lines, "body sha1 "+hex.EncodeToString(sum[:])), "\n")
 }
 
 // goldenMetricFamilies lists the metric families of the default registry.
