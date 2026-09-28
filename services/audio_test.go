@@ -177,9 +177,12 @@ func TestParseDecodeDeclaration_AudioTokens(t *testing.T) {
 	}
 }
 
-// A declaration of audio tokens only is a declaration that declares no
-// HEVC: never no_declaration, and the reason a declaration without HEVC
-// tokens gets. "unknown" with audio tokens is still pending for the video.
+// A declaration of audio tokens only names no video: never
+// no_declaration; past the checks every declaration gets (passthrough_off,
+// not_hevc, declaration_pending) it is no_hevc_declared, whatever the
+// source's size, without the source probe (which could only answer
+// needs_main or needs_main10). "unknown" with audio tokens is still pending
+// for the video. A video token, hdr-pq alone included, goes on as before.
 func TestVideoRouteFor_AudioOnlyDeclaration(t *testing.T) {
 	probed := false
 	probe := func() (sourceHEVCFacts, error) { probed = true; return sdrMain10(), nil }
@@ -193,12 +196,14 @@ func TestVideoRouteFor_AudioOnlyDeclaration(t *testing.T) {
 		{hd, "aac51", passthroughCapability{}, reasonPassthroughOff, false},
 		{sourceVideo{codec: "h264", width: 1920, height: 1080}, "aac51,ec3", on, reasonNotHEVC, false},
 		{sourceVideo{}, "aac51", on, reasonNotHEVC, false},
-		{uhd, "aac51,ac3,ec3", on, reasonNeeds2160, false},
-		// Past the cheap checks the probe runs, as for "hdr-pq" alone, and
-		// the tokens cover nothing: the 10-bit source needs Main10.
-		{hd, "aac51,ac3,ec3", on, reasonNeedsMain10, true},
+		{hd, "aac51", on, reasonNoHEVCDeclared, false},
+		{hd, "aac51,ac3,ec3", on, reasonNoHEVCDeclared, false},
+		{uhd, "aac51,ac3,ec3", on, reasonNoHEVCDeclared, false},
+		{sourceVideo{codec: "hevc", width: 7680, height: 4320}, "ec3", on, reasonNoHEVCDeclared, false},
 		{hd, "unknown,aac51", on, reasonDeclarationPending, false},
 		{uhd, "aac51,unknown", on, reasonDeclarationPending, false},
+		// A video token that covers no depth still asks the probe.
+		{hd, "hdr-pq,aac51", on, reasonNeedsMain10, true},
 	} {
 		probed = false
 		d := videoRouteFor(c.src, decl(c.decl), c.cap, probe)

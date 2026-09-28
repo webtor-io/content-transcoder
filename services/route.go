@@ -26,6 +26,7 @@ const (
 	reasonPassthroughOff     = "passthrough_off"     // this transcoder passes no HEVC through
 	reasonNotHEVC            = "not_hevc"            // the source video is not HEVC (or there is none)
 	reasonDeclarationPending = "declaration_pending" // the client's own check had not answered yet
+	reasonNoHEVCDeclared     = "no_hevc_declared"    // a declaration of audio tokens only: it names no video at all
 	reasonTooLarge           = "too_large"           // over 3840x2160, or level above 5.1
 	reasonNeeds2160          = "needs_2160"          // over 1080 (or its level) without a 2160 token
 	reasonProbeFailed        = "probe_failed"        // the local look at the source did not answer
@@ -48,7 +49,7 @@ const (
 // routeReasons lists every reason, for metric registration and tests.
 var routeReasons = []string{
 	reasonNoDeclaration, reasonPassthroughOff, reasonNotHEVC, reasonDeclarationPending,
-	reasonTooLarge, reasonNeeds2160, reasonProbeFailed, reasonDV5, reasonDV7, reasonDVBase,
+	reasonNoHEVCDeclared, reasonTooLarge, reasonNeeds2160, reasonProbeFailed, reasonDV5, reasonDV7, reasonDVBase,
 	reasonDVUnknown, reasonPixFmt, reasonProfile, reasonInterlaced, reasonNoHVCC, reasonNeedsMain,
 	reasonNeedsMain10, reasonNeedsHighTier, reasonNeedsPQ, reasonHLGLater, reasonOK,
 }
@@ -232,11 +233,14 @@ func oldRoute(reason string) routeDecision { return routeDecision{reason: reason
 // refuses is answered as retryable (see openSessionWith). The same goes for
 // a client whose check had not answered (declaration_pending).
 //
-// Audio tokens (aac51, ac3, ec3) are a declaration too, one that declares
-// no HEVC: a client that sends only them gets the reason a declaration
-// without HEVC tokens gets (passthrough_off, not_hevc, needs_2160, or,
-// after the probe, needs_main and the like), never no_declaration. The
-// checks read the video tokens only (covers, has).
+// Audio tokens (aac51, ac3, ec3) are a declaration too, one that names no
+// video: a client that sends only them is never no_declaration. Past the
+// checks every declaration gets (passthrough_off, not_hevc,
+// declaration_pending) it is no_hevc_declared, before the size checks and
+// the probe: no HEVC token, no passthrough, whatever the source -- the
+// probe would only ever have answered needs_main or needs_main10. The
+// checks read the video tokens only (covers, has); a declaration with any
+// video token (hdr-pq alone included) goes on as before.
 func videoRouteFor(src sourceVideo, decl viewerDeclaration, capability passthroughCapability, probe func() (sourceHEVCFacts, error)) routeDecision {
 	if len(decl.tokens) == 0 && !decl.pending {
 		return oldRoute(reasonNoDeclaration)
@@ -249,6 +253,9 @@ func videoRouteFor(src sourceVideo, decl viewerDeclaration, capability passthrou
 	}
 	if decl.pending {
 		return oldRoute(reasonDeclarationPending)
+	}
+	if !decl.declaresVideo() {
+		return oldRoute(reasonNoHEVCDeclared)
 	}
 	if src.width > 3840 || src.height > 2160 {
 		return oldRoute(reasonTooLarge)

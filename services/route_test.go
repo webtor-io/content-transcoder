@@ -148,6 +148,7 @@ func TestVideoRouteFor_Table(t *testing.T) {
 		{"wider than 3840", sourceVideo{codec: "hevc", width: 4096, height: 2160}, allTokens, on, facts(nil), reasonTooLarge},
 		{"taller than 2160", sourceVideo{codec: "hevc", width: 3840, height: 2400}, allTokens, on, facts(nil), reasonTooLarge},
 		{"2160 without a 2160 token", uhd, "hevc8,hevc10,hdr-pq", on, facts(nil), reasonNeeds2160},
+		{"audio tokens only", hd, "aac51,ec3", on, facts(nil), reasonNoHEVCDeclared},
 		{"2560x1080 is over 1080 too", sourceVideo{codec: "hevc", width: 2560, height: 1080}, "hevc10", on, facts(nil), reasonNeeds2160},
 		{"probe failed 1080", hd, allTokens, on, failing, reasonProbeFailed},
 		{"probe failed 2160", uhd, allTokens, on, failing, reasonProbeFailed},
@@ -245,6 +246,9 @@ func TestVideoRouteFor_CheapChecksDoNotProbe(t *testing.T) {
 		{uhd, "unknown", on},
 		{sourceVideo{codec: "hevc", width: 7680, height: 4320}, allTokens, on},
 		{uhd, "hevc10", on},
+		// Audio tokens only: no HEVC token, nothing to probe for.
+		{hd, "aac51", on},
+		{hd, "aac51,ac3,ec3", on},
 	} {
 		probed = false
 		d := videoRouteFor(c.src, decl(c.decl), c.cap, probe)

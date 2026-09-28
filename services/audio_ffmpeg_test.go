@@ -59,7 +59,7 @@ func TestAudio_RealFFmpeg(t *testing.T) {
 		{file: "av_eac3_51.mkv", decode: "hevc8,aac51", route: videoRoutePassthrough, cut: true, want: aac51},
 		{file: "av_ac3_51.mkv", decode: "hevc8,ec3", route: videoRoutePassthrough, cut: true, want: stereo, noChange: true},
 		// The re-encode route (MPEG-TS audio): the audio-only declaration
-		// takes the old route (needs_main), E-AC-3 is never copied into TS,
+		// takes the old route (no_hevc_declared), E-AC-3 is never copied into TS,
 		// a copied AAC 5.1 is cut at the seek.
 		{file: "av_eac3_51.mkv", decode: "aac51,ac3,ec3", route: videoRouteReencode, want: audioWant{codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6"}},
 		{file: "av_aac_51.mkv", decode: "aac51", route: videoRouteReencode, cut: true,

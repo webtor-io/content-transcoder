@@ -48,16 +48,17 @@ the client only declares what it decodes.
   `-2160` token its depth at 1080). The log's `decode` lists them in a fixed
   order: `unknown`, the video tokens, the audio tokens.
   - **Audio tokens and the video route.** The video checks read the video
-    tokens only. A declaration of audio tokens alone is a declaration that
-    declares no HEVC: it gets the reason any declaration without HEVC tokens
-    gets (`passthrough_off`, `not_hevc`, `needs_2160`, or after the source
-    probe `needs_main` / `needs_main10`), never `no_declaration`; so it pays
-    for the source probe on an HEVC source up to 1080p when the capability
-    is on, as `hdr-pq` alone does. `unknown` next to audio tokens only is
-    still pending for the video (`declaration_pending`): an audio answer is
-    not an answer about HEVC. Adding audio tokens to a declaration with video
-    tokens changes no video decision
-    (`TestVideoRouteFor_AudioTokensDoNotMoveTheVideo`).
+    tokens only. A declaration of audio tokens alone names no video: never
+    `no_declaration`; past the checks every declaration gets
+    (`passthrough_off`, `not_hevc`, `declaration_pending`) it is
+    `no_hevc_declared`, decided before the size checks and the source probe
+    — with no HEVC token the probe could only answer `needs_main` /
+    `needs_main10`, so it is not spent. A declaration with any video token
+    (`hdr-pq` alone included) goes on through the checks as before.
+    `unknown` next to audio tokens only is still pending for the video
+    (`declaration_pending`): an audio answer is not an answer about HEVC.
+    Adding audio tokens to a declaration with video tokens changes no video
+    decision (`TestVideoRouteFor_AudioTokensDoNotMoveTheVideo`).
 - **Capability.** `--passthrough-video-codecs` / `PASSTHROUGH_VIDEO_CODECS`
   lists the source codecs passed through (`hevc`); empty — the default —
   passes none. `--passthrough-video-codecs-file` /
@@ -72,8 +73,8 @@ the client only declares what it decodes.
 - **Decision** (`videoRouteFor`, `services/route.go`), first match wins; the
   checks before the source probe need nothing but content-prober's answer:
   `no_declaration`, `passthrough_off`, `not_hevc`, `declaration_pending`,
-  `too_large` (over 3840×2160), `needs_2160` (over 1080 — taller or wider —
-  without a 2160 token); then the source probe: `probe_failed`, `dv5`,
+  `no_hevc_declared` (audio tokens only), `too_large` (over 3840×2160),
+  `needs_2160` (over 1080 — taller or wider — without a 2160 token); then the source probe: `probe_failed`, `dv5`,
   `dv7`, `dv_base`, `dv_unknown` (RPU NAL 62/63 without a record),
   `pix_fmt`, `interlaced`, `no_hvcc` (not an hvcC, or its arrays lack a
   base-layer VPS, SPS or PPS, or hold a NAL type `hevc_mp4toannexb`
@@ -118,7 +119,8 @@ the client only declares what it decodes.
   listed in `golden_old_route_test.go` (see
   [FFmpeg Seek Strategy](#ffmpeg-seek-strategy)). Audio tokens that change
   no audio output of the source change no argument, playlist, segment or
-  run either (only the route reason, which is a declaration's, see above);
+  run either (only the route reason, which is a declaration's:
+  `no_hevc_declared` for audio tokens alone, see above);
   the declared cases have their own record (`testdata/golden_audio.json`,
   `golden_audio_test.go`).
 - **Output** (`services/passthrough_output.go`, `passthrough_web.go`), see
@@ -688,7 +690,7 @@ the prom port (8083, `--use-prom`, `httpprom` in the chart). Namespace
 | `auto_restarts_total` | Auto-restart attempts charged to a session's budget |
 | `restart_limit_reached_total` | Sessions that hit `maxConsecutiveRestarts` (once per session) |
 | `source_open_seconds{outcome}` | Time to probe a source (its first read); cached probes excluded |
-| `video_route_total{route,reason}` | POST /session answers by route (`passthrough`, `copy`, `reencode`, `audio`; `refused` for the 415 of a video the route would have to encode or the 503 of a failed check, `error` for any other failure — nothing playable among them) and reason |
+| `video_route_total{route,reason}` | POST /session answers by route (`passthrough`, `copy`, `reencode`, `audio`; `refused` for the 415 of a video the route would have to encode or the 503 of a failed check, `error` for any other failure — nothing playable among them) and reason (every reason is registered on `reencode` and `refused` from the start; `no_hevc_declared` since the audio tokens) |
 | `run_real_start_total{mode,result}` | Probes of where a copy or passthrough seek run really starts: `ok`, `failed` (error, timeout), `implausible` (before the file, over 60 s before the seek, or after it: over 60 s on the copy route, at all on passthrough). Not `ok`: the run reports the quantized seek |
 | `source_probe_seconds{result}` | The passthrough source probe, retries included, `ok`/`failed`; cached results excluded |
 | `session_segments_served{route}` | Primary segments served to a session, observed when it is removed (sessions that never started a run are not observed) |
