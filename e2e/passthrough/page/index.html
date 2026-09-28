@@ -13,7 +13,8 @@
 // Harness: run(src, {seek, seconds}) creates a passthrough session the way
 // web-ui will (decode tokens from isTypeSupported/decodingInfo, owner
 // decision 27.09: any support counts), plays it with hls.js and reports.
-const CT = 'http://127.0.0.1:18080';
+// The transcoder: ?ct=<base url> (the audio e2e runs its own), 18080 by default.
+const CT = new URLSearchParams(location.search).get('ct') || 'http://127.0.0.1:18080';
 const Q = 'token=T&api-key=K';
 const log = (...a) => { document.getElementById('log').textContent += a.join(' ') + '\n'; };
 
@@ -154,6 +155,51 @@ window.avsync = async function (src, opts = {}) {
   await fetch(`${CT}/session/${s.id}`, { method: 'DELETE' });
   // Movie second of each marker by the session offset.
   return { route: s.video_route, offset: off, flashes: flashes.map(t => [t, +(t + off).toFixed(3)]), clicks: clicks.map(t => [t, +(t + off).toFixed(3)]) };
+};
+// The channels WebAudio gets from the element, and which of them carry the
+// clicks of gen.sh's audio sources (every channel but the LFE): a 5.1 track
+// decoded as 5.1 shows 6 channels, 5 of them loud. Also what MSE and
+// canPlayType answer for AAC and Dolby. Needs a user gesture first.
+window.channels = async function (src, opts = {}) {
+  const decode = opts.decode !== undefined ? opts.decode : '';
+  const post = await fetch(`${CT}/session?decode=${encodeURIComponent(decode)}&${Q}&source_url=${encodeURIComponent('http://media:8000/' + src)}`, { method: 'POST' });
+  const s = JSON.parse(await post.text());
+  const v = document.createElement('video');
+  v.playsInline = true; v.width = 320;
+  document.body.appendChild(v);
+  const hls = new Hls();
+  const errors = [];
+  hls.on(Hls.Events.ERROR, (e, d) => errors.push({ details: d.details, fatal: d.fatal, reason: d.reason || (d.error && String(d.error)) || '' }));
+  SBS.length = 0;
+  hls.loadSource(`${CT}/session/${s.id}/index.m3u8?${Q}`);
+  hls.attachMedia(v);
+  await new Promise(r => hls.once(Hls.Events.MANIFEST_PARSED, r));
+  v.muted = false;
+  const ac = new AudioContext();
+  await ac.resume();
+  const node = ac.createMediaElementSource(v);
+  const split = ac.createChannelSplitter(8);
+  const peaks = new Array(8).fill(0);
+  const procs = [];
+  for (let c = 0; c < 8; c++) {
+    const p = ac.createScriptProcessor(1024, 1, 1);
+    p.onaudioprocess = (e) => { const d = e.inputBuffer.getChannelData(0); for (let i = 0; i < d.length; i++) peaks[c] = Math.max(peaks[c], Math.abs(d[i])); };
+    split.connect(p, c); p.connect(ac.destination); procs.push(p);
+  }
+  // The splitter's input is discrete: channel n of the element goes to
+  // output n, the ones it does not have are silent.
+  node.connect(split);
+  await v.play();
+  await sleep((opts.seconds || 4) * 1000);
+  const out = {
+    route: s.video_route, t: +v.currentTime.toFixed(3), errors, sourceBuffers: sbState(),
+    peaks: peaks.map(x => +x.toFixed(3)),
+    mse: { aac: MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"'), ec3: MediaSource.isTypeSupported('audio/mp4; codecs="ec-3"'), ac3: MediaSource.isTypeSupported('audio/mp4; codecs="ac-3"') },
+    aac51: await navigator.mediaCapabilities.decodingInfo({ type: 'media-source', audio: { contentType: 'audio/mp4; codecs="mp4a.40.2"', channels: '6', bitrate: 384000, samplerate: 48000 } }).then(r => r.supported, e => String(e)),
+  };
+  hls.destroy(); procs.forEach(p => p.disconnect()); await ac.close(); v.remove();
+  await fetch(`${CT}/session/${s.id}`, { method: 'DELETE' });
+  return out;
 };
 log('ready', navigator.userAgent);
 </script>
