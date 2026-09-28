@@ -534,3 +534,33 @@ func TestPassthroughSeek_CutsCopiedDolby(t *testing.T) {
 		}
 	}
 }
+
+// A passthrough session whose declaration leaves the audio as it was
+// (hevc8 alone) counts its audio as 079acfd did: the 192 kb/s allowance,
+// not the copied AAC's own 128 kb/s -- the master must stay byte for byte
+// the old one, and audioBandwidth would say 128000 here (it says 192000
+// for a copy without a rate, which is why the other cases cannot tell).
+func TestPassthroughBandwidth_UndeclaredAudioKeepsAllowance(t *testing.T) {
+	h := NewHLS("http://src/movie.mkv", &cp.ProbeReply{Streams: []*cp.Stream{
+		{Index: 0, CodecType: "video", CodecName: "hevc", Width: 1920, Height: 1080},
+		{Index: 1, CodecType: "audio", CodecName: "aac", Channels: 2, BitRate: "128000"},
+	}}, &HLSConfig{sm: Online, aacCodec: "libfdk_aac"})
+	if !h.usePassthrough() {
+		t.Fatal("usePassthrough refused")
+	}
+	f := sdrMain10()
+	h.passFacts = &f
+	h.useAudioDecoders(decl("hevc8").audioDecoders())
+	if got := h.passthroughAudioAllowance(); got != passthroughAudioBandwidth {
+		t.Errorf("allowance %d, want %d", got, passthroughAudioBandwidth)
+	}
+	// 079acfd: passthroughBandwidth(0, 10e6, 10, true) = 8 Mbit/s + 192000.
+	got := h.passthroughMasterPlaylist("hvc1.2.4.L120.90", passthroughBandwidth(0, 10_000_000, 10, h.passthroughAudioAllowance()))
+	want := "#EXTM3U\n" +
+		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="eng",NAME="Track #1",AUTOSELECT=YES,DEFAULT=YES,URI="a0.m3u8"` + "\n" +
+		`#EXT-X-STREAM-INF:BANDWIDTH=8192000,RESOLUTION=1920x1080,CODECS="hvc1.2.4.L120.90,mp4a.40.2",VIDEO-RANGE=SDR,AUDIO="audio"` + "\n" +
+		"v0-1080.m3u8\n"
+	if got != want {
+		t.Errorf("master\n got %q\nwant %q", got, want)
+	}
+}
