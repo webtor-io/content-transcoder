@@ -245,8 +245,11 @@ to 2 channels copied, everything else encoded to AAC stereo
   `pickMostCompleteCodecName`; the variant's codec is used only when it lists
   one audio codec), switching with `changeType`. When the declaration
   changes the audio, each audio rendition says `CHANNELS` (the output's
-  count; E-AC-3 JOC would be `16/JOC` for Apple, but content-prober's answer
-  has no profile to tell it by, so it is the channel count) and `BANDWIDTH`
+  count; `"2"` for an AAC copied without a count from content-prober — the
+  rule copies it as up to 2 channels, and RFC 8216 4.3.4.1 makes the
+  attribute REQUIRED on every rendition once one has it; E-AC-3 JOC would be
+  `16/JOC` for Apple, but content-prober's answer has no profile to tell it
+  by, so it is the channel count) and `BANDWIDTH`
   counts the largest audio output: an encode at its rate (384 kb/s, 192 kb/s
   stereo), a copy at the stream's `bit_rate`, else mkvmerge's `BPS` tag, else
   640 kb/s over 2 channels and 192 kb/s up to 2 — on the old route on top of

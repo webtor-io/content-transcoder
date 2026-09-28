@@ -42,7 +42,9 @@ func TestAudioOutputFor_Table(t *testing.T) {
 		{"aac stereo, nothing declared", "aac", 2, noDecoders, copyAAC(2), copyAAC(2)},
 		{"aac stereo, everything declared", "aac", 2, allAudio, copyAAC(2), copyAAC(2)},
 		{"aac mono", "aac", 1, allAudio, copyAAC(1), copyAAC(1)},
-		{"aac, channels unknown", "aac", 0, noDecoders, copyAAC(0), copyAAC(0)},
+		// A count content-prober did not give: copied as up to 2 channels,
+		// and said so (CHANNELS="2" when the master says CHANNELS).
+		{"aac, channels unknown", "aac", 0, noDecoders, copyAAC(2), copyAAC(2)},
 		// aac 3-6ch: copied with aac51, stereo without.
 		{"aac 5.1, nothing declared", "aac", 6, noDecoders, stereo, stereo},
 		{"aac 5.1 with aac51", "aac", 6, aac51Only, copyAAC(6), copyAAC(6)},
@@ -562,5 +564,45 @@ func TestPassthroughBandwidth_UndeclaredAudioKeepsAllowance(t *testing.T) {
 		"v0-1080.m3u8\n"
 	if got != want {
 		t.Errorf("master\n got %q\nwant %q", got, want)
+	}
+}
+
+// A copied AAC whose channel count content-prober did not give still says
+// CHANNELS when its neighbours do (REQUIRED on every audio rendition,
+// RFC 8216 4.3.4.1): "2", what the rule copies it as. Without a
+// declaration that changes the audio the master has no CHANNELS at all, as
+// always.
+func TestMasterChannels_CopiedAACWithoutCount(t *testing.T) {
+	streams := []*cp.Stream{
+		{Index: 0, CodecType: "video", CodecName: "hevc", Width: 1920, Height: 1080},
+		{Index: 1, CodecType: "audio", CodecName: "aac"},
+		{Index: 2, CodecType: "audio", CodecName: "dts", Channels: 6},
+	}
+	for _, passthrough := range []bool{false, true} {
+		h := NewHLS("http://src/movie.mkv", &cp.ProbeReply{Streams: streams}, &HLSConfig{sm: Online, aacCodec: "libfdk_aac"})
+		if passthrough && !h.usePassthrough() {
+			t.Fatal("usePassthrough refused")
+		}
+		master := func() string {
+			if passthrough {
+				return h.passthroughMasterPlaylist("hvc1.2.4.L120.90", 1)
+			}
+			dir := t.TempDir()
+			if err := h.MakeMasterPlaylist(dir); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := os.ReadFile(filepath.Join(dir, "index.m3u8"))
+			return string(b)
+		}
+		if m := master(); strings.Contains(m, "CHANNELS") {
+			t.Errorf("passthrough=%v, nothing declared:\n%s", passthrough, m)
+		}
+		h.useAudioDecoders(aac51Only)
+		m := master()
+		for _, want := range []string{`NAME="Track #1",AUTOSELECT=YES,DEFAULT=YES,CHANNELS="2",URI="a0.m3u8"`, `NAME="Track #2",CHANNELS="6",URI="a1.m3u8"`} {
+			if !strings.Contains(m, want) {
+				t.Errorf("passthrough=%v, aac51: no %s in\n%s", passthrough, want, m)
+			}
+		}
 	}
 }

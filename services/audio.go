@@ -46,7 +46,11 @@ type audioOutput struct {
 	// encoded to AAC with channels channels.
 	copy bool
 	// channels is the output's channel count: 2 or 6 for an encode, the
-	// source's for a copy (0 when content-prober did not say).
+	// source's for a copy -- 2 for an AAC copied without a count from
+	// content-prober: the rule copies it as a track of up to 2 channels,
+	// and CHANNELS, which says the most a rendition has, is REQUIRED on
+	// every audio rendition of a master that has it on any (RFC 8216
+	// 4.3.4.1).
 	channels int
 	// codecs is the output's RFC 6381 codec, as CODECS names it.
 	codecs string
@@ -93,6 +97,9 @@ func audioOutputFor(s *cp.Stream, d audioDecoders, fmp4 bool, opts ParamOptions)
 	if !opts.EncodeAudio {
 		switch {
 		case codec == "aac" && ch <= 2:
+			if ch <= 0 {
+				ch = 2
+			}
 			return audioOutput{copy: true, channels: ch, codecs: codecsAAC}
 		case codec == "aac" && ch <= 6 && d.aac51:
 			return audioOutput{copy: true, channels: ch, codecs: codecsAAC}

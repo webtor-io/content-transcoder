@@ -475,7 +475,8 @@ func (h *HLSStream) MakeMasterPlaylist() string {
 
 // masterMedia is the stream's EXT-X-MEDIA tag; with channels (a session
 // whose declaration changes its audio, HLS.audioVariant) an audio stream's
-// carries CHANNELS, the output's channel count, when it is known.
+// carries CHANNELS, the output's channel count (audioOutput.channels: 2
+// for an AAC copied without a count from the probe).
 // E-AC-3 JOC (Atmos) would be "16/JOC" for Apple; content-prober's answer
 // has no profile to tell it by, so it is the channel count too.
 func (h *HLSStream) masterMedia(channels bool) string {
