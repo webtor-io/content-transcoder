@@ -372,7 +372,7 @@ func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclarati
 			"source": redactSecrets(sourceURL),
 			"decode": decl.String(),
 			"audio":  v,
-			"codecs": hls.audioCodecs(),
+			"codecs": hls.audioCodecs(ParamOptions{}),
 		}).Info("session: audio")
 	}
 	// Content with neither video nor audio is refused before a session
@@ -400,8 +400,19 @@ func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclarati
 	// A passthrough master is written from the init of the run's first
 	// process (CODECS of the output's hvcC), when it is first asked for
 	// (sessionPlaylistHandler).
+	// With a declaration that changes the audio an old-route master says
+	// the audio of the options the session's runs start with: a declared
+	// copy its variant learned to encode is an encode (refreshMaster
+	// follows what its run learns later). Without one the master does not
+	// depend on them, and is written as it always was.
 	if !hls.passthrough {
-		if err := hls.MakeMasterPlaylist(sess.outputDir); err != nil {
+		var err error
+		if hls.audioVariant() == "" {
+			err = hls.MakeMasterPlaylist(sess.outputDir)
+		} else {
+			err = sess.writeOldRouteMaster(sess.runMgr.rememberedFallbacks(hashDir, hls))
+		}
+		if err != nil {
 			s.sessionManager.Close(sess.id)
 			return nil, route, http.StatusInternalServerError, "failed to create master playlist"
 		}
@@ -792,6 +803,7 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 		if sess.h != nil && sess.h.passthrough && !s.passthroughMaster(w, r, sess) {
 			return
 		}
+		sess.refreshMaster()
 		data, err = sessionMasterPlaylist(sess)
 		if err != nil {
 			http.Error(w, "master playlist not found", http.StatusNotFound)

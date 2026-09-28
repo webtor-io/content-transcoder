@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	log "github.com/sirupsen/logrus"
 	cp "github.com/webtor-io/content-prober/content-prober"
 )
 
@@ -35,7 +36,10 @@ import (
 // audioOutputFor is the one decision. The run's arguments (codecParams),
 // the seek cuts (reencodeSeekCuts, through codecParams), the master
 // playlists (CODECS, CHANNELS, BANDWIDTH) and the run variant
-// (audioVariant) all read it, so they cannot disagree.
+// (audioVariant) all read it, so they cannot disagree. The masters read it
+// with the options of the run they describe (its fallbacks: a copy a muxer
+// refused is encoded from the next start, copiedAudioMuxFailure), the run
+// variant without any.
 
 // audioDecoders is what the client declared it decodes of the audio.
 type audioDecoders struct {
@@ -241,14 +245,40 @@ func (h *HLS) audioVariant() string {
 	return "a" + b.String()
 }
 
-// audioCodecs is the CODECS part of the session's audio: every codec its
-// audio outputs have, once, in their order; mp4a.40.2 when it has none
-// (what the old master has always said).
-func (h *HLS) audioCodecs() string {
+// copiesDeclaredAudio reports whether the session copies an audio track
+// only because the client declared it decodes it (a copied E-AC-3, AC-3 or
+// AAC 5.1): the outputs a muxer can refuse where the audio every session
+// had never was, and the only ones a refusal is cured for by encoding
+// (copiedAudioMuxFailure). Without a declaration that changes the audio it
+// is false, and a failed run learns what it always did.
+func (h *HLS) copiesDeclaredAudio() bool {
+	for _, s := range h.audioStreams() {
+		if s.audioOutput(ParamOptions{}).copy && !audioOutputFor(s.s, audioDecoders{}, s.fmp4, ParamOptions{}).copy {
+			return true
+		}
+	}
+	return false
+}
+
+// audioSignature names the session's audio outputs under opts, one
+// variantCode per output, to tell whether a master written for one run's
+// options still says what a run with others makes (refreshMaster).
+func (h *HLS) audioSignature(opts ParamOptions) string {
+	var b strings.Builder
+	for _, s := range h.audioStreams() {
+		b.WriteString(s.audioOutput(opts).variantCode())
+	}
+	return b.String()
+}
+
+// audioCodecs is the CODECS part of the session's audio under a run's
+// options: every codec its audio outputs have, once, in their order;
+// mp4a.40.2 when it has none (what the old master has always said).
+func (h *HLS) audioCodecs(opts ParamOptions) string {
 	var codecs []string
 	seen := map[string]bool{}
 	for _, s := range h.audioStreams() {
-		c := s.audioOutput(ParamOptions{}).codecs
+		c := s.audioOutput(opts).codecs
 		if !seen[c] {
 			seen[c] = true
 			codecs = append(codecs, c)
@@ -260,14 +290,89 @@ func (h *HLS) audioCodecs() string {
 	return strings.Join(codecs, ",")
 }
 
-// audioBandwidth is the largest rate of the session's audio outputs: a
-// player plays one rendition at a time.
-func (h *HLS) audioBandwidth() int64 {
+// audioBandwidth is the largest rate of the session's audio outputs under a
+// run's options: a player plays one rendition at a time.
+func (h *HLS) audioBandwidth(opts ParamOptions) int64 {
 	var bw int64
 	for _, s := range h.audioStreams() {
-		if r := s.audioOutput(ParamOptions{}).bitRate(s.s); r > bw {
+		if r := s.audioOutput(opts).bitRate(s.s); r > bw {
 			bw = r
 		}
 	}
 	return bw
+}
+
+// runHLS is the HLS the arguments of the session's run are made of: the
+// HLS of the session that started it. Sessions share a run when their
+// arguments are the same (runKeyFor) -- but only without fallbacks: the
+// run variant is decided without them, and after EncodeAudio a copied
+// E-AC-3 becomes AAC 5.1 for a declaration with aac51 and AAC stereo for
+// one without, while both keep the run the first of them started. The
+// master says what that run makes. The rest of the HLS -- streams, route,
+// source facts -- is the same for every session of the key.
+func (s *Session) runHLS(run *TranscodeRun) *HLS {
+	if run != nil && run.h != nil {
+		return run.h
+	}
+	return s.h
+}
+
+// writeOldRouteMaster writes the master of an old-route session for the
+// options its runs start with (opts: what the run manager remembers for
+// the session's variant) and notes them for refreshMaster.
+func (s *Session) writeOldRouteMaster(opts ParamOptions) error {
+	if err := s.writeMasterFile(s.h.oldRouteMaster(opts)); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.masterAudio = s.h.audioSignature(opts)
+	s.mu.Unlock()
+	return nil
+}
+
+// refreshMaster rewrites the session's master when its run now makes other
+// audio than the master was written for: a run that learned EncodeAudio (a
+// copy a muxer refused mid-file) after the master went out encodes from
+// its next start, and a later read of the master -- a player that loads it
+// again, the same session after a seek -- must name the AAC it gets; a run
+// another declaration started (runHLS) makes that declaration's encode.
+// Only a session whose declaration changes the audio: no other master
+// depends on the options (every output is AAC, no CHANNELS), and it is
+// never touched after it is written. A passthrough master not written yet
+// is left to passthroughMaster, which writes it with the run's options.
+func (s *Session) refreshMaster() {
+	if s.h == nil || s.h.audioVariant() == "" {
+		return
+	}
+	run := s.currentRun()
+	if run == nil {
+		return
+	}
+	opts, h := run.options(), s.runHLS(run)
+	sig := h.audioSignature(opts)
+	s.mu.Lock()
+	written, pt := s.masterAudio, s.ptMaster
+	s.mu.Unlock()
+	if sig == written || (s.h.passthrough && pt == nil) {
+		return
+	}
+	var data string
+	if s.h.passthrough {
+		data = h.passthroughMasterFor(pt.videoCodecs, pt.bandwidth(h, opts), opts)
+	} else {
+		data = h.oldRouteMaster(opts)
+	}
+	if err := s.writeMasterFile(data); err != nil {
+		s.logger.WithError(err).Warn("session: master not rewritten for the run's audio")
+		return
+	}
+	s.mu.Lock()
+	s.masterAudio = sig
+	s.mu.Unlock()
+	s.logger.WithFields(log.Fields{
+		"audio":       sig,
+		"was":         written,
+		"encodeAudio": opts.EncodeAudio,
+		"codecs":      h.audioCodecs(opts),
+	}).Info("session: master rewritten for the audio the run makes now")
 }

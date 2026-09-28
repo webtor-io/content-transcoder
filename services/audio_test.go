@@ -504,11 +504,11 @@ func TestPassthroughMaster_DeclaredAudio(t *testing.T) {
 	h := surroundHLS(t, "hevc", true)
 	f := sdrMain10()
 	h.passFacts = &f
-	if got := h.passthroughMasterPlaylist("hvc1.2.4.L120.90", passthroughBandwidth(0, 10_000_000, 10, h.passthroughAudioAllowance())); !strings.Contains(got, `BANDWIDTH=8192000,RESOLUTION=1920x1080,CODECS="hvc1.2.4.L120.90,mp4a.40.2",`) || strings.Contains(got, "CHANNELS") {
+	if got := h.passthroughMasterPlaylist("hvc1.2.4.L120.90", passthroughBandwidth(0, 10_000_000, 10, h.passthroughAudioAllowance(ParamOptions{}))); !strings.Contains(got, `BANDWIDTH=8192000,RESOLUTION=1920x1080,CODECS="hvc1.2.4.L120.90,mp4a.40.2",`) || strings.Contains(got, "CHANNELS") {
 		t.Errorf("nothing declared:\n%s", got)
 	}
 	h.useAudioDecoders(allAudio)
-	got := h.passthroughMasterPlaylist("hvc1.2.4.L120.90", passthroughBandwidth(0, 10_000_000, 10, h.passthroughAudioAllowance()))
+	got := h.passthroughMasterPlaylist("hvc1.2.4.L120.90", passthroughBandwidth(0, 10_000_000, 10, h.passthroughAudioAllowance(ParamOptions{})))
 	want := "#EXTM3U\n" +
 		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="eng",NAME="Track #1",AUTOSELECT=YES,DEFAULT=YES,CHANNELS="2",URI="a0.m3u8"` + "\n" +
 		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="eng",NAME="Track #2",CHANNELS="6",URI="a1.m3u8"` + "\n" +
@@ -607,11 +607,11 @@ func TestPassthroughBandwidth_UndeclaredAudioKeepsAllowance(t *testing.T) {
 	f := sdrMain10()
 	h.passFacts = &f
 	h.useAudioDecoders(decl("hevc8").audioDecoders())
-	if got := h.passthroughAudioAllowance(); got != passthroughAudioBandwidth {
+	if got := h.passthroughAudioAllowance(ParamOptions{}); got != passthroughAudioBandwidth {
 		t.Errorf("allowance %d, want %d", got, passthroughAudioBandwidth)
 	}
 	// 079acfd: passthroughBandwidth(0, 10e6, 10, true) = 8 Mbit/s + 192000.
-	got := h.passthroughMasterPlaylist("hvc1.2.4.L120.90", passthroughBandwidth(0, 10_000_000, 10, h.passthroughAudioAllowance()))
+	got := h.passthroughMasterPlaylist("hvc1.2.4.L120.90", passthroughBandwidth(0, 10_000_000, 10, h.passthroughAudioAllowance(ParamOptions{})))
 	want := "#EXTM3U\n" +
 		`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="eng",NAME="Track #1",AUTOSELECT=YES,DEFAULT=YES,URI="a0.m3u8"` + "\n" +
 		`#EXT-X-STREAM-INF:BANDWIDTH=8192000,RESOLUTION=1920x1080,CODECS="hvc1.2.4.L120.90,mp4a.40.2",VIDEO-RANGE=SDR,AUDIO="audio"` + "\n" +

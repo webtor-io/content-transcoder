@@ -97,8 +97,8 @@ type TranscodeRun struct {
 
 	// fallbacks are the ParamOptions this source turned out to need: set
 	// when a run died on a failure they cure (adtsScalableError,
-	// timestampsFailure), and preset by the run manager for every later run
-	// of the same source. Guarded by mu.
+	// timestampsFailure, copiedAudioMuxFailure), and preset by the run
+	// manager for every later run of the same source. Guarded by mu.
 	fallbacks ParamOptions
 	// onFallbacks tells the run manager what this source needs on this
 	// route (under fallbackKey).
@@ -123,6 +123,11 @@ type TranscodeRun struct {
 	// with per-process addresses stripped (see sameFailure). Only
 	// reapProcess touches it, and one process is reaped at a time.
 	lastFailure string
+
+	// procAudio is what the run's last process made of each audio output
+	// (variantCode under its options), for a session whose declaration
+	// changes the audio: dropChangedAudioPlaylistsLocked. Guarded by mu.
+	procAudio []string
 
 	// lifecycle
 	runCtx    context.Context
@@ -178,6 +183,52 @@ func (r *TranscodeRun) RefCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.refCount
+}
+
+// options are the FFmpeg options of the run's process: the one running,
+// or, when it has died, the next -- the fallbacks change only when a
+// process ends, before its end is visible (reapProcess closes done last).
+func (r *TranscodeRun) options() ParamOptions {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fallbacks
+}
+
+// dropChangedAudioPlaylistsLocked removes the playlist of every audio output
+// the process about to start makes differently from the process before it
+// -- a fallback (copiedAudioMuxFailure) turned a copy the declaration made
+// into an encode. The old playlist would be served until the new process
+// writes its own, and it names the old process's init and segments: in
+// fMP4 an "ec-3" init the player appends while the master says AAC
+// (Chrome 154: "Unsupported audio format 0x65632d33 in stsd box",
+// MediaError 4 -- measured on the first request after the restart).
+// Without the playlist the request waits for the new process's
+// (WaitForPlaylist). Only a session whose declaration changes the audio:
+// every other run's restarts leave its files as they always did. Caller
+// holds mu.
+func (r *TranscodeRun) dropChangedAudioPlaylistsLocked() {
+	if r.h == nil || r.h.audioVariant() == "" {
+		return
+	}
+	streams := r.h.audioStreams()
+	codes := make([]string, len(streams))
+	for i, s := range streams {
+		codes[i] = s.audioOutput(r.fallbacks).variantCode()
+	}
+	for i, s := range streams {
+		if r.procAudio == nil || codes[i] == r.procAudio[i] {
+			continue
+		}
+		pl := s.GetPlaylistPath(r.outputDir) + ".ffmpeg"
+		if err := os.Remove(pl); err == nil {
+			r.logger.WithFields(log.Fields{
+				"playlist": filepath.Base(pl),
+				"was":      r.procAudio[i],
+				"now":      codes[i],
+			}).Info("run: audio output changed, the previous process's playlist removed")
+		}
+	}
+	r.procAudio = codes
 }
 
 // Start starts FFmpeg if not already running.
@@ -246,6 +297,8 @@ func (r *TranscodeRun) startLocked() error {
 	if err := os.MkdirAll(r.outputDir, 0755); err != nil {
 		return errors.Wrap(err, "failed to create run dir")
 	}
+
+	r.dropChangedAudioPlaylistsLocked()
 
 	// The process's generation exists before its arguments: a passthrough
 	// run names its init segments after it (passthrough_output.go).
@@ -505,6 +558,21 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 		before := r.fallbacks
 		if strings.Contains(tail, adtsScalableError) {
 			r.fallbacks.EncodeAudio = true
+		}
+		// A copy only the client's declaration made that a muxer refuses
+		// (E-AC-3 with several independent substreams, a broken E-AC-3
+		// frame mid-file: movenc.c handle_eac3) fails every restart the
+		// same way. The run encodes the audio from the next start, and
+		// without -xerror: the bitstream the muxer refused is the one the
+		// decoder now reads, and on both sources measured (FFmpeg 8.1.2)
+		// the decoder errs on it too ("corrupt decoded frame", "Error
+		// submitting packet to decoder"), which -xerror makes fatal -- an
+		// encode alone died at the same place, as the stereo encode of a
+		// session without a declaration does on those sources. Any other
+		// session's copies fail as they always did.
+		if r.h != nil && r.h.copiesDeclaredAudio() && copiedAudioMuxFailure(tail) {
+			r.fallbacks.EncodeAudio = true
+			r.fallbacks.Lenient = true
 		}
 		// Seek runs never have -xerror, so for them there is nothing to drop.
 		if r.seekTime == 0 && timestampsFailure(tail) {

@@ -109,6 +109,18 @@ func (m *RunManager) rememberRealStart(key string, v float64, probed bool) {
 	m.realStarts[key] = rememberedStart{v: v, probed: probed}
 }
 
+// rememberedFallbacks are the options the runs of h's variant of the
+// source in hashDir start with (newRunLocked), what its master is written
+// for before the session's run exists.
+func (m *RunManager) rememberedFallbacks(hashDir string, h *HLS) ParamOptions {
+	if m == nil {
+		return ParamOptions{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.fallbacks[fallbackKey(hashDir, h)]
+}
+
 func (m *RunManager) rememberFallbacks(key string, opts ParamOptions) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

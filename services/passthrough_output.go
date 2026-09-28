@@ -338,18 +338,19 @@ func codecsMismatches(src, out hvccHeader) []string {
 const passthroughAudioBandwidth = 192_000
 
 // passthroughAudioAllowance is the audio part of a passthrough session's
-// BANDWIDTH: none without audio renditions, passthroughAudioBandwidth for
-// the audio every session had, and the largest rate of its audio outputs
-// (audioBandwidth: a copied E-AC-3 at its own rate, AAC 5.1 at 384 kb/s)
-// when the declaration changes them.
-func (h *HLS) passthroughAudioAllowance() int64 {
+// BANDWIDTH when its run uses opts: none without audio renditions,
+// passthroughAudioBandwidth for the audio every session had, and the
+// largest rate of its audio outputs under opts (audioBandwidth: a copied
+// E-AC-3 at its own rate, AAC 5.1 at 384 kb/s) when the declaration
+// changes them.
+func (h *HLS) passthroughAudioAllowance(opts ParamOptions) int64 {
 	switch {
 	case len(h.audio) == 0:
 		return 0
 	case h.audioVariant() == "":
 		return passthroughAudioBandwidth
 	}
-	return h.audioBandwidth()
+	return h.audioBandwidth(opts)
 }
 
 // passthroughBandwidth is the BANDWIDTH of a passthrough variant: the
@@ -372,10 +373,18 @@ func passthroughBandwidth(sourceBitRate, seg0Bytes int64, seg0Seconds float64, a
 	return bw
 }
 
-// passthroughMasterPlaylist is the master playlist of a passthrough session:
-// the renditions as on the old route, and one variant described by the
-// output (CODECS from its init, VIDEO-RANGE from the transfer the route was
-// decided on).
+// passthroughMasterPlaylist is passthroughMasterFor a run without fallback
+// options.
+func (s *HLS) passthroughMasterPlaylist(videoCodecs string, bandwidth int64) string {
+	return s.passthroughMasterFor(videoCodecs, bandwidth, ParamOptions{})
+}
+
+// passthroughMasterFor is the master playlist of a passthrough session
+// whose run uses opts: the renditions as on the old route, and one variant
+// described by the output (CODECS from its init, VIDEO-RANGE from the
+// transfer the route was decided on, the audio's CODECS and CHANNELS from
+// what the run's options make of each track -- after a muxer refused a
+// copied E-AC-3 that is the AAC the run encodes from the next start).
 //
 // Every audio rendition is in the one group, and CODECS lists each audio
 // codec they have, once, in rendition order (audioCodecs: "mp4a.40.2,ec-3"
@@ -389,12 +398,12 @@ func passthroughBandwidth(sourceBitRate, seg0Bytes int64, seg0Seconds float64, a
 // parsed "ec-3" or "mp4a.40.2" wins over the variant's; the variant's is
 // taken as the track's only when it lists one audio codec), changing the
 // SourceBuffer's type when a switch changes the codec (changeType).
-func (s *HLS) passthroughMasterPlaylist(videoCodecs string, bandwidth int64) string {
+func (s *HLS) passthroughMasterFor(videoCodecs string, bandwidth int64, opts ParamOptions) string {
 	changed := s.audioVariant() != ""
 	var res strings.Builder
 	res.WriteString("#EXTM3U\n")
 	for _, a := range s.audio {
-		res.WriteString(a.masterMedia(changed))
+		res.WriteString(a.masterMedia(changed, opts))
 		res.WriteRune('\n')
 	}
 	for _, su := range s.subs {
@@ -404,7 +413,7 @@ func (s *HLS) passthroughMasterPlaylist(videoCodecs string, bandwidth int64) str
 	v := s.primaryVideo()
 	codecs := videoCodecs
 	if len(s.audio) > 0 {
-		codecs += "," + s.audioCodecs()
+		codecs += "," + s.audioCodecs(opts)
 	}
 	videoRange := "SDR"
 	if s.passFacts != nil && s.passFacts.transfer() == transferPQ {
@@ -510,7 +519,8 @@ var passthroughMasterPoll = 200 * time.Millisecond
 // writePassthroughMaster writes the master playlist of a passthrough
 // session once the video init of its run's current process is complete,
 // waiting up to timeout. A master already there is kept: the video's
-// configuration is the source's, the same for every run of the session.
+// configuration is the source's, the same for every run of the session
+// (its audio part follows the run: refreshMaster).
 func (s *Session) writePassthroughMaster(ctx context.Context, timeout time.Duration) error {
 	master := filepath.Join(s.outputDir, "index.m3u8")
 	if fileExists(master) {
@@ -547,9 +557,13 @@ func (s *Session) writePassthroughMaster(ctx context.Context, timeout time.Durat
 	}
 }
 
-// buildPassthroughMaster makes the master from the video init at initPath
-// and the run's first video segment, counts any difference from the
-// source's hvcC, and writes it whole (a temporary file renamed over it).
+// buildPassthroughMaster makes the master from the video init at initPath,
+// the run's first video segment and the audio the run makes (runHLS with
+// the run's options: what its process makes -- or, after one died on a
+// fallback, the next one will; the options change only between
+// processes), counts any difference from the source's hvcC, and writes it
+// whole (a temporary file renamed over it). What it was made of is kept
+// for refreshMaster.
 func (s *Session) buildPassthroughMaster(run *TranscodeRun, initPath string) error {
 	logger := s.logger.WithField("init", filepath.Base(initPath))
 	init, err := os.ReadFile(initPath)
@@ -591,8 +605,37 @@ func (s *Session) buildPassthroughMaster(run *TranscodeRun, initPath string) err
 			seg0Bytes = fi.Size()
 		}
 	}
-	bw := passthroughBandwidth(s.h.sourceBitRate, seg0Bytes, seg0Seconds, s.h.passthroughAudioAllowance())
-	data := s.h.passthroughMasterPlaylist(codecs, bw)
+	opts, h := run.options(), s.runHLS(run)
+	in := passthroughMasterInputs{videoCodecs: codecs, seg0Bytes: seg0Bytes, seg0Seconds: seg0Seconds}
+	bw := in.bandwidth(h, opts)
+	if err := s.writeMasterFile(h.passthroughMasterFor(codecs, bw, opts)); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.ptMaster = &in
+	s.masterAudio = h.audioSignature(opts)
+	s.mu.Unlock()
+	logger.WithFields(log.Fields{"codecs": codecs, "bandwidth": bw}).Info("passthrough: master playlist written")
+	return nil
+}
+
+// passthroughMasterInputs is what a passthrough master is made of besides
+// the audio: the video's CODECS from the init and the first video segment
+// its rate was measured on.
+type passthroughMasterInputs struct {
+	videoCodecs string
+	seg0Bytes   int64
+	seg0Seconds float64
+}
+
+// bandwidth is the master's BANDWIDTH with the audio of a run using opts.
+func (in passthroughMasterInputs) bandwidth(h *HLS, opts ParamOptions) int64 {
+	return passthroughBandwidth(h.sourceBitRate, in.seg0Bytes, in.seg0Seconds, h.passthroughAudioAllowance(opts))
+}
+
+// writeMasterFile writes the session's master whole: a temporary file
+// renamed over it, so a reader gets the old one or the new one.
+func (s *Session) writeMasterFile(data string) error {
 	tmp, err := os.CreateTemp(s.outputDir, "index.m3u8.tmp-*")
 	if err != nil {
 		return err
@@ -607,7 +650,6 @@ func (s *Session) buildPassthroughMaster(run *TranscodeRun, initPath string) err
 		_ = os.Remove(tmp.Name())
 		return err
 	}
-	logger.WithFields(log.Fields{"codecs": codecs, "bandwidth": bw}).Info("passthrough: master playlist written")
 	return nil
 }
 

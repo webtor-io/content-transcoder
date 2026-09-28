@@ -470,16 +470,17 @@ func (h *HLSStream) GetLanguage() string {
 }
 
 func (h *HLSStream) MakeMasterPlaylist() string {
-	return h.masterMedia(false)
+	return h.masterMedia(false, ParamOptions{})
 }
 
 // masterMedia is the stream's EXT-X-MEDIA tag; with channels (a session
 // whose declaration changes its audio, HLS.audioVariant) an audio stream's
-// carries CHANNELS, the output's channel count (audioOutput.channels: 2
-// for an AAC copied without a count from the probe).
+// carries CHANNELS, the channel count of its output under the run's
+// options opts (audioOutput.channels: 2 for an AAC copied without a count
+// from the probe).
 // E-AC-3 JOC (Atmos) would be "16/JOC" for Apple; content-prober's answer
 // has no profile to tell it by, so it is the channel count too.
-func (h *HLSStream) masterMedia(channels bool) string {
+func (h *HLSStream) masterMedia(channels bool, opts ParamOptions) string {
 	t := "AUDIO"
 	if h.st == Subtitle {
 		t = "SUBTITLES"
@@ -489,7 +490,7 @@ func (h *HLSStream) masterMedia(channels bool) string {
 		extra = ",AUTOSELECT=YES,DEFAULT=YES"
 	}
 	if h.st == Audio && channels {
-		if n := h.audioOutput(ParamOptions{}).channels; n > 0 {
+		if n := h.audioOutput(opts).channels; n > 0 {
 			extra += fmt.Sprintf(`,CHANNELS="%d"`, n)
 		}
 	}
@@ -589,18 +590,26 @@ func NewHLS(in string, probe *cp.ProbeReply, cfg *HLSConfig) *HLS {
 	return h
 }
 
-// MakeMasterPlaylist writes the master playlist of an old-route session.
-// CODECS names the audio its outputs have (audioCodecs: on this route
-// always mp4a.40.2, the value it has always had). When the declaration
-// changes the audio (audioVariant) the audio renditions say their CHANNELS
-// and BANDWIDTH counts the largest audio output on top of the video's
-// rate; without, BANDWIDTH is the video's rate alone, as it always was.
+// MakeMasterPlaylist writes the master playlist of an old-route session
+// whose runs use no fallback options (oldRouteMaster).
 func (s *HLS) MakeMasterPlaylist(out string) error {
+	return os.WriteFile(out+"/index.m3u8", []byte(s.oldRouteMaster(ParamOptions{})), 0644)
+}
+
+// oldRouteMaster is the master playlist of an old-route session whose run
+// uses opts. CODECS names the audio its outputs have (audioCodecs: on this
+// route always mp4a.40.2, the value it has always had). When the
+// declaration changes the audio (audioVariant) the audio renditions say
+// their CHANNELS and BANDWIDTH counts the largest audio output on top of
+// the video's rate, both of the outputs the run's options give (a copy a
+// muxer refused is an encode from the next start); without, BANDWIDTH is
+// the video's rate alone, as it always was, and nothing depends on opts.
+func (s *HLS) oldRouteMaster(opts ParamOptions) string {
 	changed := s.audioVariant() != ""
 	var res strings.Builder
 	res.WriteString("#EXTM3U\n")
 	for _, a := range s.audio {
-		res.WriteString(fmt.Sprintln(a.masterMedia(changed)))
+		res.WriteString(fmt.Sprintln(a.masterMedia(changed, opts)))
 	}
 	for _, su := range s.subs {
 		res.WriteString(fmt.Sprintln(su.MakeMasterPlaylist()))
@@ -612,12 +621,12 @@ func (s *HLS) MakeMasterPlaylist(out string) error {
 		}
 		bandwidth := int64(rate)
 		if changed {
-			bandwidth = s.audioBandwidth()
+			bandwidth = s.audioBandwidth(opts)
 			if p.r != nil {
 				bandwidth += int64(p.r.Rate()) * 1000
 			}
 		}
-		res.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=%v,CODECS=\"avc1.42e00a,%s\"", bandwidth, s.audioCodecs()))
+		res.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=%v,CODECS=\"avc1.42e00a,%s\"", bandwidth, s.audioCodecs(opts)))
 		if len(s.audio) > 0 {
 			res.WriteString(`,AUDIO="audio"`)
 		}
@@ -628,7 +637,7 @@ func (s *HLS) MakeMasterPlaylist(out string) error {
 		res.WriteString(p.GetPlaylistName())
 		res.WriteRune('\n')
 	}
-	return os.WriteFile(out+"/index.m3u8", []byte(res.String()), 0644)
+	return res.String()
 }
 
 type HLSBuilder struct {

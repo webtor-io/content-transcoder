@@ -168,7 +168,12 @@ the client only declares what it decodes.
   an init no CODECS can be read from is counted as `unbuildable` and the
   master is answered 500 — a guessed CODECS fails in the player at once.
   Written once, atomically; later reads serve it with the session's
-  `#EXT-X-SESSION-OFFSET` like the old master.
+  `#EXT-X-SESSION-OFFSET` like the old master. Its audio part is what the
+  run makes: the run's options (after a fallback, the AAC it encodes from
+  the next start) and the decisions of the session that started the run
+  (`runHLS`, see the known cost under Audio, Run variant); with a
+  declaration that changes the audio a read after the run learned a
+  fallback rewrites it (`refreshMaster`).
 - **Media playlists** come from hlsenc as they are (VERSION 7, EVENT,
   `#EXT-X-MAP:URI="<prefix>-init-<gen>.mp4"`) and get the usual treatment
   (`PlaylistForStream`: ENDLIST only once the run completed,
@@ -249,6 +254,48 @@ to 2 channels copied, everything else encoded to AAC stereo
     downmix of 7.1 is normalized by 3.1, −9.9 dB).
 - **Fallback.** `EncodeAudio` (after an ADTS failure) still encodes every
   track: 5.1 where `aac51` gives 5.1 or a multichannel copy, stereo elsewhere.
+  - **A copy the muxer refuses.** movenc refuses E-AC-3 it cannot put in an
+    ISOBMFF track (`handle_eac3`: several independent substreams, a frame
+    that no longer parses once the track has samples) and the run dies,
+    exit 183, `[aost#1:0/copy @ …] Error submitting a packet to the muxer:
+    Invalid data found when processing input` (`copiedAudioMuxFailure`).
+    With nothing learned every restart died the same way and after 5 the
+    playlists answered 503. When the session copies audio only because the
+    declaration made it (`copiesDeclaredAudio`), the run learns
+    `EncodeAudio` **and** `Lenient`, remembered under the variant's
+    `fallbackKey` (from a seek run too): the decoder then reads the bitstream
+    the muxer refused, and on both sources measured (FFmpeg 8.1.2) it errs
+    too (`corrupt decoded frame`, `Error submitting packet to decoder`),
+    which `-xerror` makes fatal — an encode alone died at the same place.
+    Every other session fails as before: without a declaration these
+    sources' stereo encode dies on the decoder the same way (measured on
+    079acfd: 503 after 5 restarts in 3.3–3.7 s), a pre-existing gap no
+    fallback covers.
+  - **The masters follow.** CODECS, CHANNELS and BANDWIDTH are made with
+    the options of the run they describe: a passthrough master from the
+    run's options when it is written, an old-route master from what the run
+    manager remembers for the variant when the session opens; a read after
+    the run learned a fallback rewrites either (`refreshMaster`, logged
+    `session: master rewritten for the audio the run makes now`). Without a
+    declaration that changes the audio neither depends on the options and
+    both are written as before.
+  - **Stale playlists.** A process that makes an audio output differently
+    from the process before it starts without that output's old playlist
+    (`dropChangedAudioPlaylistsLocked`): served until the new process wrote
+    its own, it named the old process's `ec-3` init, which Chrome appended
+    and failed on (`Unsupported audio format 0x65632d33 in stsd box`) while
+    the master said AAC. Only with a declaration that changes the audio.
+  - Measured (`e2e/audio/craft.py` sources, the review's construction:
+    `av_eac3_multi.mkv`, every other frame independent substream 1;
+    `av_eac3_corrupt.mkv`, frame 400 at 12.8 s broken): d06015f, declared
+    `hevc8,aac51,ec3` — 503 after 3.3–3.4 s, master `ec-3`; now — one
+    failed start, the run finishes (25 segments, ENDLIST, 1.8 s), master
+    `mp4a.40.2` `CHANNELS="6"`, output AAC 5.1 in configuration 6; Chrome
+    154 plays `av_eac3_corrupt.mkv` from the start and after a seek, and
+    `av_eac3_multi.mkv` after a seek; from the start the latter stalls on
+    a video gap (0.54–9.92 s): the dead first process's partial `v0-0`
+    and playlist, what any early death and restart leaves (not measured
+    on 079acfd, where such a restart needs another cause).
 - **Master.** CODECS lists every audio codec the outputs have, once, in
   rendition order (the old route's is `avc1.42e00a,mp4a.40.2` as always: all
   its outputs are AAC). One audio group: RFC 8216 4.3.4.2 asks CODECS to name
@@ -284,6 +331,18 @@ to 2 channels copied, everything else encoded to AAC stereo
   (`ac3` on a TS session changes nothing). The remembered real start and
   FFmpeg options are per key too (`fallbackKey`): a variant learns its own
   fallbacks, at the price of one failed start of its own.
+  - **Known cost: fallbacks and declarations that share a run.** The
+    variant is decided without fallbacks, so declarations whose arguments
+    are equal without them share a run, its fallbacks and its directory —
+    and after `EncodeAudio` their arguments would differ: a copied E-AC-3
+    becomes AAC 5.1 with `aac51` and AAC stereo without. The run keeps the
+    arguments of the session that started it: a session of `hevc8,ec3` on
+    a run a `hevc8,aac51,ec3` session started gets AAC 5.1 it did not
+    declare (measured: `av_eac3_multi.mkv`, master `CHANNELS="6"`,
+    output AAC 5.1), and in the other order (not measured) the `aac51`
+    session gets stereo. The master says what the run makes (`runHLS`).
+    Left as it is (review finding 6): putting what a fallback would make
+    into the variant splits runs these declarations share today.
 - **Seeks.** A copied AAC 5.1 on the re-encode route is cut at the seek point
   like copied stereo (`reencodeSeekCuts`); passthrough cuts every audio
   output, copied Dolby included (`passthroughAudioMaps`); the copy route cuts
@@ -321,9 +380,10 @@ to 2 channels copied, everything else encoded to AAC stereo
   Dolby track is not played there; that check is left to Safari and Edge.
 - **Not verified:** TrueHD 7.1 and E-AC-3 7.1 sources (FFmpeg's encoders stop
   at 5.1; the 7.1 downmix was checked on FLAC 7.1, the same decoded layout),
-  a real E-AC-3 JOC (Atmos) stream, E-AC-3 with more than one independent
-  substream (movenc refuses it, `handle_eac3`: such a copy would fail the run),
-  native HLS players and their use of CHANNELS.
+  a real E-AC-3 JOC (Atmos) stream, a real (not crafted) E-AC-3 with more
+  than one independent substream, an AC-3 with bsid over 8 (movenc refuses
+  its `dac3`; no such source could be made: FFmpeg does not decode a
+  patched one), native HLS players and their use of CHANNELS.
 
 ### Capabilities (GET /capabilities)
 
@@ -557,7 +617,8 @@ ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ... -ss 0 -map 0:{copi
 - From the start (`{time}` = 0) `-xerror` stays. Without it, a failed read of the source ends FFmpeg like the end of the file: exit 0, a completed run, and it is never restarted.
 - Per-source fallbacks (`ParamOptions`, remembered by the RunManager per source). When a run dies on a failure a known option cures, that source's later runs get the option:
   - timestamps (`Non-monotonic DTS` / `Invalid DTS` under `-xerror`) → `Lenient`, which drops `-xerror`;
-  - `Scalable configurations are not allowed in ADTS` → `EncodeAudio`, which re-encodes AAC the probe would copy.
+  - `Scalable configurations are not allowed in ADTS` → `EncodeAudio`, which re-encodes AAC the probe would copy;
+  - a muxer refusing a packet of a copied audio output (`[aost#…/copy @ …] Error submitting a packet to the muxer`), only when the session copies audio because the client declared it (`copiesDeclaredAudio`) → `EncodeAudio` and `Lenient`, on seek runs too (see [Audio](#audio-multichannel-aac-and-dolby), Fallback).
 
 ### Passthrough Mode (HEVC → fMP4)
 

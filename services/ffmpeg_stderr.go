@@ -22,6 +22,23 @@ func timestampsFailure(tail string) bool {
 	return strings.Contains(tail, "Non-monotonic DTS") || strings.Contains(tail, "Invalid DTS")
 }
 
+// copiedAudioMuxPattern matches a muxer refusing a packet of a copied audio
+// output: FFmpeg 8.1.2 logs "Error submitting a packet to the muxer" under
+// the output stream's name (fftools/ffmpeg_mux.c write_packet), and a
+// stream copy's name is "aost#<file>:<stream>/copy" (ffmpeg_mux_init.c).
+// movenc refuses an E-AC-3 packet it cannot put in an ISOBMFF track
+// (handle_eac3: several independent substreams, a frame that does not
+// parse once the track has samples), and the run dies with it: "[aost#1:0/
+// copy @ 0x...] Error submitting a packet to the muxer: Invalid data found
+// when processing input" (measured on 8.1.2, exit 183).
+var copiedAudioMuxPattern = regexp.MustCompile(`\[aost#\d+:\d+/copy[ \]@][^\n]*Error submitting a packet to the muxer`)
+
+// copiedAudioMuxFailure reports a run that died on a muxer refusing a
+// copied audio packet (copiedAudioMuxPattern).
+func copiedAudioMuxFailure(tail string) bool {
+	return copiedAudioMuxPattern.MatchString(tail)
+}
+
 const (
 	// stderrTailBytes bounds what is read back from ffmpeg.err: the cause
 	// of a failure sits near the end, and a long run's stderr grew to 1.7 MB

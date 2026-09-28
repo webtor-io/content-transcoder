@@ -102,6 +102,13 @@ type Session struct {
 	primaryServed int
 	started       bool
 
+	// masterAudio is the audio the master was written for
+	// (HLS.audioSignature of its run's options), ptMaster what else a
+	// passthrough master was made of: refreshMaster rewrites the master
+	// when the run's options have since changed its audio. Guarded by mu.
+	masterAudio string
+	ptMaster    *passthroughMasterInputs
+
 	// Lifecycle
 	closed bool
 	logger *log.Entry
