@@ -20,7 +20,13 @@
 #                     takes too (the decoded layout is the same "7.1")
 #   av_aac_71.mkv     AAC 7.1 (libfdk_aac)
 #   av_aac_20.mkv     AAC stereo (the control)
+#   av_aac_pce_51.mkv AAC 5.1(side) by FFmpeg's own encoder: a program config
+#                     element (channel configuration 0; ffprobe: no layout),
+#                     which Chrome does not play copied
 #   av_h264_aac_51.mkv  H.264 (the copy route) with AAC 5.1
+#
+# craft.py (on the host, python3) makes two E-AC-3 copies movenc refuses
+# from av_eac3_51.mkv: av_eac3_multi.mkv and av_eac3_corrupt.mkv.
 set -e
 mkdir -p /w/media
 cd /w/media
@@ -46,6 +52,7 @@ mk av_truehd_51.mkv "$A51" -strict -2 -c:a truehd
 mk av_flac_71.mkv "$A71" -c:a flac
 mk av_aac_71.mkv "$A71" -c:a libfdk_aac -b:a 512k
 mk av_aac_20.mkv "$A20" -c:a aac -b:a 128k
+mk av_aac_pce_51.mkv "$A51" -c:a aac -b:a 384k
 [ -f av_h264_aac_51.mkv ] || $F -f lavfi -i "$V" -f lavfi -i "$A51" -t 70 -map 0:v -map 1:a \
   -c:v libx264 -preset veryfast -g 240 -keyint_min 240 -sc_threshold 0 -bf 3 -c:a libfdk_aac -b:a 384k av_h264_aac_51.mkv
 for f in av_*.mkv; do

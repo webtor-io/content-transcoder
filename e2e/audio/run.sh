@@ -8,8 +8,10 @@
 # (E2E_WORK, default ./work). Steps:
 #
 #   gotest   TestAudio_RealFFmpeg (services/audio_ffmpeg_test.go) in the
-#            production image: codec, channels, layout, rate, fMP4 sample
-#            entries, CODECS and CHANNELS, the seek cuts
+#            production image: codec, channels, layout, AAC channel
+#            configuration, rate, fMP4 sample entries, CODECS and CHANNELS,
+#            the seek cuts; the E-AC-3 copies movenc refuses (craft.py)
+#            recovering on EncodeAudio
 #   avsync   A/V after a seek to 35 (and from the start) on the route and
 #            audio each declaration gives, from the served segments
 #            (avsync.py's measurement; limits in avsync_audio.py)
@@ -51,6 +53,7 @@ docker build -q -t "$E2E_NEW_IMAGE" "$W/img" >/dev/null
 "$PT/ctl.sh" tools
 "$PT/ctl.sh" media
 docker exec "$P-tools" sh /e2e/gen.sh > "$W/gen.log" 2>&1
+[ -f "$W/media/av_eac3_multi.mkv" ] && [ -f "$W/media/av_eac3_corrupt.mkv" ] || python3 "$D/craft.py" "$W/media"
 
 steps=${*:-gotest avsync layout}
 fail=0

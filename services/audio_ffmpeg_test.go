@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // TestAudio_RealFFmpeg plays sessions that declare audio through the real
@@ -37,7 +40,7 @@ func TestAudio_RealFFmpeg(t *testing.T) {
 	srv := httptest.NewServer(http.FileServer(http.Dir(media)))
 	defer srv.Close()
 	const all = "hevc8,aac51,ac3,ec3"
-	aac51 := audioWant{codec: "aac", channels: 6, layout: "5.1", entry: "mp4a", codecs: "mp4a.40.2", attr: "6"}
+	aac51 := audioWant{codec: "aac", channels: 6, layout: "5.1", entry: "mp4a", codecs: "mp4a.40.2", attr: "6", config: 6}
 	stereo := audioWant{codec: "aac", channels: 2, layout: "stereo", entry: "mp4a", codecs: "mp4a.40.2"}
 	for _, c := range []audioRealCase{
 		// Passthrough (fMP4 audio), everything declared: E-AC-3 and AC-3
@@ -47,7 +50,10 @@ func TestAudio_RealFFmpeg(t *testing.T) {
 		{file: "av_ac3_51.mkv", decode: all, route: videoRoutePassthrough, cut: true,
 			want: audioWant{copy: true, codec: "ac3", channels: 6, layout: "5.1(side)", entry: "ac-3", codecs: "ac-3", attr: "6"}},
 		{file: "av_aac_51.mkv", decode: all, route: videoRoutePassthrough, cut: true,
-			want: audioWant{copy: true, codec: "aac", channels: 6, layout: "5.1", entry: "mp4a", codecs: "mp4a.40.2", attr: "6"}},
+			want: audioWant{copy: true, codec: "aac", channels: 6, layout: "5.1", entry: "mp4a", codecs: "mp4a.40.2", attr: "6", config: 6}},
+		// AAC 5.1(side) with a PCE (channel configuration 0): encoded to
+		// AAC 5.1 in configuration 6, not copied.
+		{file: "av_aac_pce_51.mkv", decode: all, route: videoRoutePassthrough, cut: true, want: aac51},
 		{file: "av_dts_51.mkv", decode: all, route: videoRoutePassthrough, cut: true, want: aac51},
 		{file: "av_truehd_51.mkv", decode: all, route: videoRoutePassthrough, cut: true, want: aac51},
 		{file: "av_flac_71.mkv", decode: all, route: videoRoutePassthrough, cut: true, want: aac51},
@@ -63,7 +69,9 @@ func TestAudio_RealFFmpeg(t *testing.T) {
 		// a copied AAC 5.1 is cut at the seek.
 		{file: "av_eac3_51.mkv", decode: "aac51,ac3,ec3", route: videoRouteReencode, want: audioWant{codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6"}},
 		{file: "av_aac_51.mkv", decode: "aac51", route: videoRouteReencode, cut: true,
-			want: audioWant{copy: true, codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6"}},
+			want: audioWant{copy: true, codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6", config: 6}},
+		{file: "av_aac_pce_51.mkv", decode: "aac51", route: videoRouteReencode,
+			want: audioWant{codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6", config: 6}},
 		{file: "av_dts_51.mkv", decode: "aac51", route: videoRouteReencode, want: audioWant{codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6"}},
 		{file: "av_truehd_51.mkv", decode: "aac51", route: videoRouteReencode, want: audioWant{codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6"}},
 		{file: "av_flac_71.mkv", decode: "aac51", route: videoRouteReencode, want: audioWant{codec: "aac", channels: 6, layout: "5.1", codecs: "mp4a.40.2", attr: "6"}},
@@ -75,6 +83,16 @@ func TestAudio_RealFFmpeg(t *testing.T) {
 	} {
 		t.Run(c.file+"/"+c.decode, func(t *testing.T) { realAudioSession(t, srv.URL, c) })
 	}
+	// E-AC-3 copies movenc refuses (e2e/audio/craft.py): the first process
+	// dies, the run encodes from the next start, and the master names what
+	// it makes.
+	for _, c := range []audioFallbackCase{
+		{file: "av_eac3_multi.mkv", decode: "hevc8,aac51,ec3", want: aac51},
+		{file: "av_eac3_corrupt.mkv", decode: "hevc8,aac51,ec3", want: aac51},
+		{file: "av_eac3_corrupt.mkv", decode: "hevc8,ec3", want: audioWant{codec: "aac", channels: 2, layout: "stereo", entry: "mp4a", codecs: "mp4a.40.2", attr: "2", config: 2}},
+	} {
+		t.Run(c.file+"/"+c.decode, func(t *testing.T) { realAudioFallbackSession(t, srv.URL, c) })
+	}
 }
 
 type audioWant struct {
@@ -85,6 +103,7 @@ type audioWant struct {
 	entry    string // fMP4 sample entry; "" for TS
 	codecs   string // the audio part of the master's CODECS
 	attr     string // CHANNELS of the rendition, "" for none
+	config   int    // AAC channel configuration of the output (0: a PCE), -1 unchecked (not AAC)
 }
 
 type audioRealCase struct {
@@ -253,6 +272,13 @@ func realAudioSession(t *testing.T, base string, c audioRealCase) {
 	if p.CodecName != c.want.codec || p.Channels != c.want.channels || p.ChannelLayout != c.want.layout {
 		t.Errorf("output %s %d %s, want %s %d %s", p.CodecName, p.Channels, p.ChannelLayout, c.want.codec, c.want.channels, c.want.layout)
 	}
+	config := -1
+	if p.CodecName == "aac" {
+		config = aacChannelConfig(t, file)
+		if c.want.config > 0 && config != c.want.config {
+			t.Errorf("AAC channel configuration %d, want %d", config, c.want.config)
+		}
+	}
 	entry, inner := "", []string(nil)
 	if mp4 {
 		m := mapURI.FindStringSubmatch(pl)
@@ -296,7 +322,111 @@ func realAudioSession(t *testing.T, base string, c audioRealCase) {
 	if math.Abs(stotal-vtotal) > 0.3 {
 		t.Errorf("after the seek the audio playlist has %.3f s, the video %.3f s", stotal, vtotal)
 	}
-	t.Log(fmt.Sprintf("RESULT %s decode=%s route=%s: %s %dch %s %.0f kb/s entry=%s%v CODECS=%s CHANNELS=%q; seek: offset=%s audio %.3f s video %.3f s, first audio pts %.3f",
-		c.file, c.decode, c.route, p.CodecName, p.Channels, p.ChannelLayout, rate, entry, inner, codecs[1], attr,
+	t.Log(fmt.Sprintf("RESULT %s decode=%s route=%s: %s %dch %s config=%d %.0f kb/s entry=%s%v CODECS=%s CHANNELS=%q; seek: offset=%s audio %.3f s video %.3f s, first audio pts %.3f",
+		c.file, c.decode, c.route, p.CodecName, p.Channels, p.ChannelLayout, config, rate, entry, inner, codecs[1], attr,
 		strings.TrimSpace(strings.SplitN(strings.SplitN(realGet(t, web, sess, "a0.m3u8").Body.String(), "#EXT-X-SESSION-OFFSET:", 2)[1], "\n", 2)[0]), stotal, vtotal, first))
+}
+
+// aacChannelConfig is the MPEG-4 channel configuration of the first AAC
+// frame of file's first audio track, as FFmpeg's ADTS muxer writes it from
+// the track's AudioSpecificConfig (0: the channels are in a PCE).
+func aacChannelConfig(t *testing.T, file string) int {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "first.aac")
+	if b, err := exec.Command("ffmpeg", "-v", "error", "-i", file, "-map", "0:a:0", "-c", "copy", "-frames:a", "1", "-f", "adts", out).CombinedOutput(); err != nil {
+		t.Fatalf("ADTS of %s: %v %s", file, err, b)
+	}
+	h, err := os.ReadFile(out)
+	if err != nil || len(h) < 4 || h[0] != 0xff || h[1]&0xf0 != 0xf0 {
+		t.Fatalf("no ADTS header in %s: %v % x", out, err, h)
+	}
+	return int(h[2]&1)<<2 | int(h[3]>>6)
+}
+
+type audioFallbackCase struct {
+	file, decode string
+	// want: the output after the fallback.
+	want audioWant
+}
+
+// realAudioFallbackSession plays a passthrough session whose copied E-AC-3
+// movenc refuses: the playlists are asked for as a player keeps asking
+// (each ask restarts a dead run, within the session's budget) until the run
+// finished the source; then the run must have learned EncodeAudio, its
+// argv encode the track, the master name the AAC it makes, the rendition be
+// that AAC, and a seek run start encoding.
+func realAudioFallbackSession(t *testing.T, base string, c audioFallbackCase) {
+	web, sm := realWeb(t)
+	sess := realPost(t, web, sm, base+"/"+c.file, c.decode)
+	restarts0 := testutil.ToFloat64(metricAutoRestartsTotal)
+	first := realGet(t, web, sess, "index.m3u8")
+	firstCodecs := ""
+	if m := streamCodecs.FindStringSubmatch(first.Body.String()); m != nil {
+		firstCodecs = m[1]
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for !sess.runIsCompleted() && time.Now().Before(deadline) {
+		if w := realGet(t, web, sess, "a0.m3u8"); w.Code == http.StatusServiceUnavailable {
+			t.Fatalf("a0.m3u8: %d %s (restart budget spent)", w.Code, w.Body.String())
+		}
+		realGet(t, web, sess, sess.h.primary[0].GetPlaylistName())
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !sess.runIsCompleted() {
+		t.Fatal("the run did not finish the source")
+	}
+	restarts := testutil.ToFloat64(metricAutoRestartsTotal) - restarts0
+	run := sess.currentRun()
+	if !run.options().EncodeAudio {
+		t.Errorf("the run did not learn EncodeAudio: %+v", run.options())
+	}
+	args := strings.Join(run.cmd.Args, " ")
+	if strings.Contains(outputOf(args, "0:1"), " -c:a copy ") {
+		t.Errorf("the E-AC-3 is still copied: %s", args)
+	}
+	master := realGet(t, web, sess, "index.m3u8").Body.String()
+	codecs := streamCodecs.FindStringSubmatch(master)
+	if codecs == nil || !strings.HasSuffix(codecs[1], ","+c.want.codecs) || strings.Contains(codecs[1], "ec-3") {
+		t.Errorf("CODECS %v, want the audio %s:\n%s", codecs, c.want.codecs, master)
+	}
+	attr := ""
+	if m := mediaChannels.FindStringSubmatch(master); m != nil {
+		attr = m[1]
+	}
+	if attr != c.want.attr {
+		t.Errorf("CHANNELS %q, want %q", attr, c.want.attr)
+	}
+	dir := t.TempDir()
+	file, pl, _, _ := audioTrack(t, web, sess, dir, "start.mp4")
+	p := ffprobeAudio(t, file)
+	if p.CodecName != c.want.codec || p.Channels != c.want.channels || p.ChannelLayout != c.want.layout {
+		t.Errorf("output %s %d %s, want %s %d %s", p.CodecName, p.Channels, p.ChannelLayout, c.want.codec, c.want.channels, c.want.layout)
+	}
+	config := aacChannelConfig(t, file)
+	if config != c.want.config {
+		t.Errorf("AAC channel configuration %d, want %d", config, c.want.config)
+	}
+	m := mapURI.FindStringSubmatch(pl)
+	if m == nil {
+		t.Fatalf("fMP4 audio without a MAP:\n%s", pl)
+	}
+	init := filepath.Join(dir, "init.mp4")
+	os.WriteFile(init, realGet(t, web, sess, m[1]).Body.Bytes(), 0644)
+	entry, _ := sampleEntry(t, init)
+	if entry != c.want.entry {
+		t.Errorf("sample entry %s, want %s", entry, c.want.entry)
+	}
+	// A seek: a new run of the variant, encoding from its first start.
+	sw := httptest.NewRecorder()
+	web.handler.ServeHTTP(sw, httptest.NewRequest(http.MethodPost, "/session/"+sess.id+"/seek?t=35", nil))
+	if sw.Code != 200 {
+		t.Fatalf("seek: %d %s", sw.Code, sw.Body.String())
+	}
+	sargs := strings.Join(sess.currentRun().cmd.Args, " ")
+	if strings.Contains(outputOf(sargs, "0:1"), " -c:a copy ") {
+		t.Errorf("the seek run copies the E-AC-3: %s", sargs)
+	}
+	t.Log(fmt.Sprintf("RESULT %s decode=%s: first master CODECS=%s; after %v restarts: %s %dch %s config=%d entry=%s CODECS=%s CHANNELS=%q; seek run encodes: %v",
+		c.file, c.decode, firstCodecs, restarts, p.CodecName, p.Channels, p.ChannelLayout, config, entry, codecs[1], attr,
+		!strings.Contains(outputOf(sargs, "0:1"), " -c:a copy ")))
 }

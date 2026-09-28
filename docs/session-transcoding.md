@@ -236,7 +236,12 @@ to 2 channels copied, everything else encoded to AAC stereo
   probes), quad and 2.1 (`quad`, `2.1`). libfdk_aac maps 5.1(side) to
   configuration 6 (`5.1`). A PCE that declares exactly a configuration's
   elements would be named like it and still be copied: content-prober gives
-  no extradata to tell; FFmpeg's encoder never writes one.
+  no extradata to tell; FFmpeg's encoder never writes one. Measured on
+  `av_aac_pce_51.mkv` (`e2e/audio/gen.sh`, FFmpeg's encoder on 5.1(side):
+  ADTS channel configuration 0): d06015f copied it and Chrome 154 failed in
+  TS and fMP4 (MediaError 4, `CHUNK_DEMUXER_ERROR_APPEND_FAILED`); now it
+  is encoded, channel configuration 6 in both, and plays from the start and
+  after a seek, WebAudio getting 6 channels with the silent LFE silent.
 - **384 kb/s.** Without `-b:a` libfdk_aac takes `(96·SCE + 128·CPE) ·
   rate / 44` (`libfdk-aacenc.c`): 489 kb/s for 5.1 at 48 kHz. 384 kb/s is
   64 kb/s per full channel, the stereo default's share, and the rate web-ui
