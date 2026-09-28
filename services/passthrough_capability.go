@@ -43,14 +43,19 @@ type passthroughCapability struct {
 
 func (c passthroughCapability) has(codec string) bool { return c.codecs[codec] }
 
-func (c passthroughCapability) String() string {
-	var out []string
+// list is the codecs passed through, sorted; never nil -- an empty
+// capability is an empty list (GET /capabilities answers [] for it, not
+// null).
+func (c passthroughCapability) list() []string {
+	out := make([]string, 0, len(c.codecs))
 	for k := range c.codecs {
 		out = append(out, k)
 	}
 	sort.Strings(out)
-	return strings.Join(out, ",")
+	return out
 }
+
+func (c passthroughCapability) String() string { return strings.Join(c.list(), ",") }
 
 // parsePassthroughCodecs reads a codec list (commas or whitespace). It
 // returns the capability -- the listed codecs this build can write -- and,

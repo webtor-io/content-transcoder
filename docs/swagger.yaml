@@ -1,5 +1,13 @@
 basePath: /
 definitions:
+  services.capabilitiesResponse:
+    properties:
+      passthrough_video_codecs:
+        description: 'PassthroughVideoCodecs is sorted and never null: [] passes none.'
+        items:
+          type: string
+        type: array
+    type: object
   services.sessionCreateResponse:
     properties:
       duration:
@@ -27,6 +35,25 @@ info:
   title: Content Transcoder API
   version: "1.0"
 paths:
+  /capabilities:
+    get:
+      description: Which source video codecs a session opened now hands to the player
+        as they are (HEVC passthrough). Re-read from the capability file like POST
+        /session; the route itself is decided per session.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/services.capabilitiesResponse'
+        "405":
+          description: Method not allowed
+          schema:
+            type: string
+      summary: Transcoder capabilities
+      tags:
+      - capabilities
   /session:
     post:
       description: Creates a new session, probes media, starts FFmpeg from position

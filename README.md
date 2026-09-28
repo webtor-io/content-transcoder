@@ -61,6 +61,10 @@ takes the route it always had. `PASSTHROUGH_VIDEO_CODECS=hevc` works with
 `DISABLE_VIDEO_TRANSCODING=true` too: passthrough copies the video, so the
 sources a player can decode as they are play there as well.
 
+`GET /capabilities` answers what a session opened now passes through,
+`{"passthrough_video_codecs":["hevc"]}` or `[]` — for a service that must
+not promise what the transcoder will not do (web-ui's Discover asks it).
+
 ## Example
 ```
 cd server &&

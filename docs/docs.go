@@ -15,6 +15,32 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/capabilities": {
+            "get": {
+                "description": "Which source video codecs a session opened now hands to the player as they are (HEVC passthrough). Re-read from the capability file like POST /session; the route itself is decided per session.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "capabilities"
+                ],
+                "summary": "Transcoder capabilities",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.capabilitiesResponse"
+                        }
+                    },
+                    "405": {
+                        "description": "Method not allowed",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/session": {
             "post": {
                 "description": "Creates a new session, probes media, starts FFmpeg from position 0",
@@ -309,6 +335,18 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "services.capabilitiesResponse": {
+            "type": "object",
+            "properties": {
+                "passthrough_video_codecs": {
+                    "description": "PassthroughVideoCodecs is sorted and never null: [] passes none.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "services.sessionCreateResponse": {
             "type": "object",
             "properties": {

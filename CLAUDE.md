@@ -83,6 +83,9 @@ Session API:
 - `GET /session/{id}/{segment}.ts` — Segment file (auto-restarts FFmpeg if needed)
 - `GET /session/{id}/{segment}.m4s`, `GET /session/{id}/{stream}-init-{gen}.mp4` — fMP4 segment and init of a passthrough session (HEVC as it is); 404 on the old route. See docs/session-transcoding.md, Passthrough output
 
+Capabilities:
+- `GET /capabilities` — `{"passthrough_video_codecs":[...]}`, what a session opened now passes through (the capability file re-read as for POST /session; `[]`, never null, when none). For services (web-ui's Discover), no CORS; no session, run or metric is touched. See docs/session-transcoding.md, Capabilities
+
 Player:
 - `GET /player/?source_url=` — Web player UI (when `--player=true`)
 

@@ -146,6 +146,9 @@ func (s *Web) buildHandler() {
 	mux.HandleFunc("/session", s.sessionCreateHandler)
 	mux.HandleFunc("/session/", s.sessionRouter)
 
+	// What a session opened now can pass through (capabilities_web.go).
+	mux.HandleFunc("/capabilities", s.capabilitiesHandler)
+
 	// Pre-session routes still handed out by rest-api, see legacyPlaylistHandler.
 	mux.HandleFunc("/index.m3u8", s.legacyPlaylistHandler)
 	mux.HandleFunc("/index.json", s.legacyProbeHandler)

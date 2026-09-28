@@ -170,6 +170,31 @@ the client only declares what it decodes.
   (a few KB each, at most one per restart) and go with it when the run is
   cleaned up.
 
+### Capabilities (GET /capabilities)
+
+`GET /capabilities` (and `HEAD`; other methods 405) answers what a session
+opened **now** passes through:
+
+```json
+{"passthrough_video_codecs":["hevc"]}
+```
+
+- The value is `passthroughCapability` exactly as POST /session reads it:
+  the flag, or the capability file re-read when it changed. An empty
+  capability is `[]`, never `null` — a client that treats the key as "the
+  transcoder answered" reads "none", not "no answer".
+- It says whether passthrough **exists** here, not which route a given
+  session will get: that is still decided per session from the source and
+  the client's declaration (`videoRouteFor`).
+- For services, not browsers: no CORS headers, `Cache-Control: no-store`.
+  It touches no session, run, output directory or metric; its cost is the
+  `stat` of the capability file that every POST /session also does.
+- Pods read the same ConfigMap, but each sees a change when the kubelet
+  syncs its mount (typically 1–2 min, not measured here): for that long
+  pods behind one Service may answer differently.
+- web-ui polls it in the background for Discover; a transcoder without
+  this endpoint (404) is "no answer" there, never "none".
+
 ### Seek (POST /session/{id}/seek?t=...)
 
 1. Quantize seek time to 30s boundary (`quantizeSeekTime`)
