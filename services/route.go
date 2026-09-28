@@ -67,10 +67,28 @@ const (
 	tokenUnknownYet = "unknown"     // the check had not answered when the form was sent
 )
 
-var knownDecodeTokens = map[string]bool{
-	tokenHEVC8: true, tokenHEVC10: true, tokenHEVC8UHD: true, tokenHEVC10UHD: true,
-	tokenHEVCHigh: true, tokenHDRPQ: true,
-}
+// Audio tokens of the declaration (audio.go): what the browser decodes of
+// the audio the transcoder can hand it besides AAC stereo.
+const (
+	tokenAAC51 = "aac51" // AAC with up to 6 channels (5.1)
+	tokenAC3   = "ac3"   // AC-3 ("ac-3" in fMP4)
+	tokenEC3   = "ec3"   // E-AC-3 ("ec-3" in fMP4)
+)
+
+// videoDecodeTokens and audioDecodeTokens are the known tokens, in the order
+// String gives them.
+var (
+	videoDecodeTokens = []string{tokenHEVC8, tokenHEVC10, tokenHEVC8UHD, tokenHEVC10UHD, tokenHEVCHigh, tokenHDRPQ}
+	audioDecodeTokens = []string{tokenAAC51, tokenAC3, tokenEC3}
+)
+
+var knownDecodeTokens = func() map[string]bool {
+	m := map[string]bool{}
+	for _, t := range append(append([]string{}, videoDecodeTokens...), audioDecodeTokens...) {
+		m[t] = true
+	}
+	return m
+}()
 
 // maxDecodeDeclaration bounds the value the parser looks at: a real one is
 // under 80 bytes, anything much longer is not from our page.
@@ -78,11 +96,13 @@ const maxDecodeDeclaration = 512
 
 // viewerDeclaration is the client's "decode" query parameter, parsed.
 type viewerDeclaration struct {
-	// tokens are the known capability tokens it carries.
+	// tokens are the known capability tokens it carries, video and audio.
 	tokens map[string]bool
-	// pending: it carries "unknown" and no capability token -- the check
+	// pending: it carries "unknown" and no video token -- the video check
 	// had not answered. A declaration with both takes the tokens: whatever
-	// did answer is an answer.
+	// did answer is an answer. Audio tokens do not answer for the video:
+	// "unknown,aac51" is pending for the video route and declares AAC 5.1
+	// for the audio (a check that did not answer is not a "no").
 	pending bool
 }
 
@@ -108,21 +128,39 @@ func parseDecodeDeclaration(values []string) viewerDeclaration {
 			unknown = true
 		}
 	}
-	d.pending = unknown && len(d.tokens) == 0
+	d.pending = unknown && !d.declaresVideo()
 	return d
 }
 
 func (d viewerDeclaration) has(t string) bool { return d.tokens[t] }
 
-// String is the declaration as the log shows it: the tokens in a fixed order.
-func (d viewerDeclaration) String() string {
-	if d.pending {
-		return tokenUnknownYet
-	}
-	var out []string
-	for _, t := range []string{tokenHEVC8, tokenHEVC10, tokenHEVC8UHD, tokenHEVC10UHD, tokenHEVCHigh, tokenHDRPQ} {
+// declaresVideo reports whether the declaration carries a video token.
+func (d viewerDeclaration) declaresVideo() bool {
+	for _, t := range videoDecodeTokens {
 		if d.tokens[t] {
-			out = append(out, t)
+			return true
+		}
+	}
+	return false
+}
+
+// audioDecoders is what the declaration says about the audio (audio.go).
+func (d viewerDeclaration) audioDecoders() audioDecoders {
+	return audioDecoders{aac51: d.has(tokenAAC51), ac3: d.has(tokenAC3), ec3: d.has(tokenEC3)}
+}
+
+// String is the declaration as the log shows it: "unknown" when pending,
+// the video tokens, then the audio tokens, each in a fixed order.
+func (d viewerDeclaration) String() string {
+	var out []string
+	if d.pending {
+		out = append(out, tokenUnknownYet)
+	}
+	for _, group := range [][]string{videoDecodeTokens, audioDecodeTokens} {
+		for _, t := range group {
+			if d.tokens[t] {
+				out = append(out, t)
+			}
 		}
 	}
 	return strings.Join(out, ",")
@@ -193,6 +231,12 @@ func oldRoute(reason string) routeDecision { return routeDecision{reason: reason
 // reason (probe_failed), the old route plays what it can, and what it
 // refuses is answered as retryable (see openSessionWith). The same goes for
 // a client whose check had not answered (declaration_pending).
+//
+// Audio tokens (aac51, ac3, ec3) are a declaration too, one that declares
+// no HEVC: a client that sends only them gets the reason a declaration
+// without HEVC tokens gets (passthrough_off, not_hevc, needs_2160, or,
+// after the probe, needs_main and the like), never no_declaration. The
+// checks read the video tokens only (covers, has).
 func videoRouteFor(src sourceVideo, decl viewerDeclaration, capability passthroughCapability, probe func() (sourceHEVCFacts, error)) routeDecision {
 	if len(decl.tokens) == 0 && !decl.pending {
 		return oldRoute(reasonNoDeclaration)

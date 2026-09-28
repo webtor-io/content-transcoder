@@ -70,12 +70,13 @@ Multiple sessions for the same source URL and seek position share a single FFmpe
 - **RunManager** (`run_manager.go`) — Deduplicates FFmpeg processes. Reaper cleans up idle runs after grace period.
 - **ContentProbe** (`content_prober.go`) — Probes media metadata via gRPC or local ffprobe. Caches in `index.json`.
 - **HLSBuilder/HLS** (`hls.go`) — Generates FFmpeg arguments for HLS encoding. Builds master playlist with video, audio, and subtitle stream groups.
+- **Audio outputs** (`audio.go`) — `audioOutputFor`, the one per-track decision (copy, AAC stereo, AAC 5.1 at 384k) that the argv, the seek cuts, the masters (CODECS, CHANNELS, BANDWIDTH) and the run variant read.
 - **TouchMap** (`touch_map.go`) — Maintains `{hashDir}.touch` file for external cleanup processes.
 
 ### HTTP Routes (services/web.go)
 
 Session API:
-- `POST /session?source_url=` — Create session, probe, start FFmpeg, return `{id, duration}`
+- `POST /session?source_url=` — Create session, probe, start FFmpeg, return `{id, duration}`; `decode=` declares what the client decodes: HEVC tokens (video route) and `aac51`, `ac3`, `ec3` (audio: AAC 5.1 copied or encoded instead of stereo, E-AC-3/AC-3 copied on fMP4). See docs/session-transcoding.md, Audio
 - `POST /session/{id}/seek?t=` — Seek to position (quantized to 30s boundaries)
 - `DELETE /session/{id}` — Close session
 - `GET /session/{id}/index.m3u8` — Master playlist
@@ -96,8 +97,8 @@ Depends on codec mode:
 | Mode | `-ss` position | Flags | Rationale |
 |------|---------------|-------|-----------|
 | **Copy** (h264 source) | Before `-i`; `-ss 0` on each subtitle output | `-ss T -noaccurate_seek -itsoffset T-R -i URL ... -ss 0 -map 0:<subtitle> ...` | Fast input-level seek; `-noaccurate_seek` starts both video and audio from same keyframe for A/V sync. R (the offset) is where FFmpeg's own seek lands (probed with FFmpeg, as passthrough; ffprobe's seek is not FFmpeg's), after T too (MPEG-TS). Every output counts from R, so cues + offset are movie time (a run landing at 0 serves the run from 0's subtitles byte for byte); video bytes unchanged, audio too unless its first packet after the seek comes after the keyframe (then it counts from R, as from 0). R after T: no `-itsoffset` (it would shift the audio late). No probe answer (failed, implausible): the input seek alone, no `-itsoffset`, no cut — R is not known, and a cut at T would drop the cues between the keyframe and T and run the rest early |
-| **Re-encode** (mpeg4, vp9, etc.) | Before `-i`; `-ss 0` on each copied audio and each subtitle output | `-ss T -i URL ... -ss 0 -map 0:<copied audio> ... -ss 0 -map 0:<subtitle> ...` | Input seek to the keyframe before T, then accurate decode up to T; the accurate seek trims only what goes through a filter graph, so copied audio (A/V) and subtitles (cue times against the offset) are cut at T on their outputs. `-xerror` is dropped on seeks |
-| **Passthrough** (HEVC → fMP4) | Before `-i`; `-ss 0` on each audio output | `-ss T -noaccurate_seek -itsoffset T-R -i URL ... -ss 0 -map 0:<audio> ...` | The copy seek; R is where FFmpeg's own seek lands (probed with FFmpeg, not ffprobe), every output counts from it, subtitles included, and the audio before it is dropped (A/V). No R: no offset, no cut, and nothing remembered for the key |
+| **Re-encode** (mpeg4, vp9, etc.) | Before `-i`; `-ss 0` on each copied audio (AAC up to 2 channels, up to 6 with `aac51`) and each subtitle output | `-ss T -i URL ... -ss 0 -map 0:<copied audio> ... -ss 0 -map 0:<subtitle> ...` | Input seek to the keyframe before T, then accurate decode up to T; the accurate seek trims only what goes through a filter graph, so copied audio (A/V) and subtitles (cue times against the offset) are cut at T on their outputs. `-xerror` is dropped on seeks |
+| **Passthrough** (HEVC → fMP4) | Before `-i`; `-ss 0` on each audio output (copied E-AC-3/AC-3 included) | `-ss T -noaccurate_seek -itsoffset T-R -i URL ... -ss 0 -map 0:<audio> ...` | The copy seek; R is where FFmpeg's own seek lands (probed with FFmpeg, not ffprobe), every output counts from it, subtitles included, and the audio before it is dropped (A/V). No R: no offset, no cut, and nothing remembered for the key |
 
 ### Output Directory Structure
 
@@ -117,6 +118,7 @@ Depends on codec mode:
         ffmpeg.out, ffmpeg.err    # FFmpeg logs
       seek-300.000/               # Shared run at position 300s
         ...
+      a6c-seek-0.000/             # Runs of a declaration that changes the audio (hevc-seek-*: passthrough)
 ```
 
 ## Key Configuration (env vars / CLI flags)

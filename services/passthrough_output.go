@@ -332,21 +332,36 @@ func codecsMismatches(src, out hvccHeader) []string {
 }
 
 // passthroughAudioBandwidth is what an audio rendition is counted at in
-// BANDWIDTH: copied AAC is at most 2 channels, encoded AAC is 2 channels at
-// libfdk_aac's default rate. An allowance, not measured per source.
+// BANDWIDTH when the declaration leaves the audio as it was: copied AAC is
+// at most 2 channels, encoded AAC is 2 channels at libfdk_aac's default
+// rate. An allowance, not measured per source.
 const passthroughAudioBandwidth = 192_000
+
+// passthroughAudioAllowance is the audio part of a passthrough session's
+// BANDWIDTH: none without audio renditions, passthroughAudioBandwidth for
+// the audio every session had, and the largest rate of its audio outputs
+// (audioBandwidth: a copied E-AC-3 at its own rate, AAC 5.1 at 384 kb/s)
+// when the declaration changes them.
+func (h *HLS) passthroughAudioAllowance() int64 {
+	switch {
+	case len(h.audio) == 0:
+		return 0
+	case h.audioVariant() == "":
+		return passthroughAudioBandwidth
+	}
+	return h.audioBandwidth()
+}
 
 // passthroughBandwidth is the BANDWIDTH of a passthrough variant: the
 // larger of the source's average bit rate (content-prober's, the whole file
 // with every track, 0 when unknown) and the first video segment's rate with
-// an audio allowance. Not Rendition.Rate, which stops at 8 Mbit/s.
-func passthroughBandwidth(sourceBitRate, seg0Bytes int64, seg0Seconds float64, withAudio bool) int64 {
+// the audio allowance (passthroughAudioAllowance). Not Rendition.Rate,
+// which stops at 8 Mbit/s.
+func passthroughBandwidth(sourceBitRate, seg0Bytes int64, seg0Seconds float64, audio int64) int64 {
 	bw := sourceBitRate
 	if seg0Seconds > 0 && seg0Bytes > 0 {
 		measured := int64(float64(seg0Bytes*8) / seg0Seconds)
-		if withAudio {
-			measured += passthroughAudioBandwidth
-		}
+		measured += audio
 		if measured > bw {
 			bw = measured
 		}
@@ -361,11 +376,25 @@ func passthroughBandwidth(sourceBitRate, seg0Bytes int64, seg0Seconds float64, w
 // the renditions as on the old route, and one variant described by the
 // output (CODECS from its init, VIDEO-RANGE from the transfer the route was
 // decided on).
+//
+// Every audio rendition is in the one group, and CODECS lists each audio
+// codec they have, once, in rendition order (audioCodecs: "mp4a.40.2,ec-3"
+// for AAC stereo then a copied E-AC-3), as RFC 8216 4.3.4.2 asks of a
+// variant. hls.js 1.6.14 keeps the
+// variant only if MediaSource takes every codec it lists
+// (level-controller.ts, areCodecsMediaSourceSupported) -- the declaration
+// is that answer -- and builds the SourceBuffer of an alternate audio
+// track from the codec in the track's own init (passthrough-remuxer.ts
+// getParsedTrackCodec, buffer-controller.ts pickMostCompleteCodecName: a
+// parsed "ec-3" or "mp4a.40.2" wins over the variant's; the variant's is
+// taken as the track's only when it lists one audio codec), changing the
+// SourceBuffer's type when a switch changes the codec (changeType).
 func (s *HLS) passthroughMasterPlaylist(videoCodecs string, bandwidth int64) string {
+	changed := s.audioVariant() != ""
 	var res strings.Builder
 	res.WriteString("#EXTM3U\n")
 	for _, a := range s.audio {
-		res.WriteString(a.MakeMasterPlaylist())
+		res.WriteString(a.masterMedia(changed))
 		res.WriteRune('\n')
 	}
 	for _, su := range s.subs {
@@ -375,7 +404,7 @@ func (s *HLS) passthroughMasterPlaylist(videoCodecs string, bandwidth int64) str
 	v := s.primaryVideo()
 	codecs := videoCodecs
 	if len(s.audio) > 0 {
-		codecs += ",mp4a.40.2"
+		codecs += "," + s.audioCodecs()
 	}
 	videoRange := "SDR"
 	if s.passFacts != nil && s.passFacts.transfer() == transferPQ {
@@ -562,7 +591,7 @@ func (s *Session) buildPassthroughMaster(run *TranscodeRun, initPath string) err
 			seg0Bytes = fi.Size()
 		}
 	}
-	bw := passthroughBandwidth(s.h.sourceBitRate, seg0Bytes, seg0Seconds, len(s.h.audio) > 0)
+	bw := passthroughBandwidth(s.h.sourceBitRate, seg0Bytes, seg0Seconds, s.h.passthroughAudioAllowance())
 	data := s.h.passthroughMasterPlaylist(codecs, bw)
 	tmp, err := os.CreateTemp(s.outputDir, "index.m3u8.tmp-*")
 	if err != nil {

@@ -315,6 +315,10 @@ type HLSStream struct {
 	// fmp4: the stream goes out as HLS fMP4 (the video and the audio of a
 	// passthrough session): .m4s segments after an init segment.
 	fmp4 bool
+	// decoders: for an audio stream, what the client declared it decodes
+	// of the audio (HLS.useAudioDecoders); the zero value, nothing, is the
+	// output the transcoder always made (audioOutputFor).
+	decoders audioDecoders
 }
 
 func (h *HLSStream) GetPlaylistPath(out string) string {
@@ -368,12 +372,9 @@ func (h *HLSStream) codecParams(opts ParamOptions) []string {
 		if h.cfg != nil && h.cfg.threads > 0 {
 			params = append(params, "-threads", strconv.Itoa(h.cfg.threads))
 		}
-	} else if h.st == Audio && (h.s.GetCodecName() != "aac" || h.s.GetChannels() > 2 || opts.EncodeAudio) {
-		params = append(
-			params,
-			h.cfg.aacCodec,
-			"-ac", "2",
-		)
+	} else if h.st == Audio {
+		// Copied, or encoded to AAC stereo or 5.1: audioOutputFor.
+		params = append(params, h.audioCodecParams(opts)...)
 	} else if h.st == Subtitle && h.s.GetCodecName() != "webvtt" {
 		params = append(params, "webvtt")
 
@@ -469,6 +470,15 @@ func (h *HLSStream) GetLanguage() string {
 }
 
 func (h *HLSStream) MakeMasterPlaylist() string {
+	return h.masterMedia(false)
+}
+
+// masterMedia is the stream's EXT-X-MEDIA tag; with channels (a session
+// whose declaration changes its audio, HLS.audioVariant) an audio stream's
+// carries CHANNELS, the output's channel count, when it is known.
+// E-AC-3 JOC (Atmos) would be "16/JOC" for Apple; content-prober's answer
+// has no profile to tell it by, so it is the channel count too.
+func (h *HLSStream) masterMedia(channels bool) string {
 	t := "AUDIO"
 	if h.st == Subtitle {
 		t = "SUBTITLES"
@@ -476,6 +486,11 @@ func (h *HLSStream) MakeMasterPlaylist() string {
 	extra := ""
 	if h.st == Audio && h.index == 0 {
 		extra = ",AUTOSELECT=YES,DEFAULT=YES"
+	}
+	if h.st == Audio && channels {
+		if n := h.audioOutput(ParamOptions{}).channels; n > 0 {
+			extra += fmt.Sprintf(`,CHANNELS="%d"`, n)
+		}
 	}
 	return fmt.Sprintf(
 		`#EXT-X-MEDIA:TYPE=%v,GROUP-ID="%v",LANGUAGE="%v",NAME="%v"%v,URI="%v"`,
@@ -573,11 +588,18 @@ func NewHLS(in string, probe *cp.ProbeReply, cfg *HLSConfig) *HLS {
 	return h
 }
 
+// MakeMasterPlaylist writes the master playlist of an old-route session.
+// CODECS names the audio its outputs have (audioCodecs: on this route
+// always mp4a.40.2, the value it has always had). When the declaration
+// changes the audio (audioVariant) the audio renditions say their CHANNELS
+// and BANDWIDTH counts the largest audio output on top of the video's
+// rate; without, BANDWIDTH is the video's rate alone, as it always was.
 func (s *HLS) MakeMasterPlaylist(out string) error {
+	changed := s.audioVariant() != ""
 	var res strings.Builder
 	res.WriteString("#EXTM3U\n")
 	for _, a := range s.audio {
-		res.WriteString(fmt.Sprintln(a.MakeMasterPlaylist()))
+		res.WriteString(fmt.Sprintln(a.masterMedia(changed)))
 	}
 	for _, su := range s.subs {
 		res.WriteString(fmt.Sprintln(su.MakeMasterPlaylist()))
@@ -587,7 +609,14 @@ func (s *HLS) MakeMasterPlaylist(out string) error {
 		if p.r != nil {
 			rate = p.r.Rate() * 1000
 		}
-		res.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=%v,CODECS=\"avc1.42e00a,mp4a.40.2\"", rate))
+		bandwidth := int64(rate)
+		if changed {
+			bandwidth = s.audioBandwidth()
+			if p.r != nil {
+				bandwidth += int64(p.r.Rate()) * 1000
+			}
+		}
+		res.WriteString(fmt.Sprintf("#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=%v,CODECS=\"avc1.42e00a,%s\"", bandwidth, s.audioCodecs()))
 		if len(s.audio) > 0 {
 			res.WriteString(`,AUDIO="audio"`)
 		}
@@ -686,16 +715,26 @@ func (h *HLS) usePassthrough() bool {
 	return true
 }
 
-// runVariant names the run layout of the route, "" for the old route: the
-// key, directory and remembered options of a passthrough run are its own,
-// so a passthrough and an old-route session of the same source and seek
+// runVariant names the run layout of the session, "" for the old route
+// with the audio it always had: the key, directory and remembered options
+// of any other run are its own, so sessions whose FFmpeg arguments differ
 // never share a run (they share a pod: torrent-http-proxy picks it by
-// infohash).
+// infohash, and a node's pods share the run directories). It is "hevc"
+// for passthrough, the audio variant (audioVariant: "a6c" and the like)
+// when the declaration changes an audio output, both joined by "-" when
+// both apply ("hevc-a6c").
 func (h *HLS) runVariant() string {
-	if h != nil && h.passthrough {
-		return "hevc"
+	if h == nil {
+		return ""
 	}
-	return ""
+	var parts []string
+	if h.passthrough {
+		parts = append(parts, "hevc")
+	}
+	if a := h.audioVariant(); a != "" {
+		parts = append(parts, a)
+	}
+	return strings.Join(parts, "-")
 }
 
 // videoRoute is the route of the session, named like the run modes.

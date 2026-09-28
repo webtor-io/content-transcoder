@@ -10,7 +10,7 @@ The transcoder uses a session-based model where each viewer creates a session vi
 
 1. Probe media via ffprobe (cached in `index.json`)
 2. Build HLS params from probe result
-3. Decide the video route (see [Video Route](#video-route-hevc-passthrough))
+3. Decide the video route (see [Video Route](#video-route-hevc-passthrough)), then the audio outputs (see [Audio](#audio-multichannel-aac-and-dolby))
 4. Create session with unique ID
 5. Write master playlist (`index.m3u8`) to session directory
 6. Acquire a shared `TranscodeRun` at position 0 via `RunManager`
@@ -40,11 +40,24 @@ re-encoded to h264 up to 1080p, over 1080p refused with 415 — or
 the client only declares what it decodes.
 
 - **Declaration.** `POST /session?...&decode=<tokens>`, comma-separated:
-  `hevc8`, `hevc10`, `hevc8-2160`, `hevc10-2160`, `hevc-high`, `hdr-pq`, or
-  `unknown` (the client's check had not answered). Exact allowlist match;
+  `hevc8`, `hevc10`, `hevc8-2160`, `hevc10-2160`, `hevc-high`, `hdr-pq`;
+  the audio tokens `aac51`, `ac3`, `ec3` (see [Audio](#audio-multichannel-aac-and-dolby));
+  or `unknown` (the client's check had not answered). Exact allowlist match;
   unknown tokens are ignored, an empty, garbage or over-512-byte value is no
   declaration. A higher token covers the lower (`hevc10` covers Main, a
-  `-2160` token its depth at 1080).
+  `-2160` token its depth at 1080). The log's `decode` lists them in a fixed
+  order: `unknown`, the video tokens, the audio tokens.
+  - **Audio tokens and the video route.** The video checks read the video
+    tokens only. A declaration of audio tokens alone is a declaration that
+    declares no HEVC: it gets the reason any declaration without HEVC tokens
+    gets (`passthrough_off`, `not_hevc`, `needs_2160`, or after the source
+    probe `needs_main` / `needs_main10`), never `no_declaration`; so it pays
+    for the source probe on an HEVC source up to 1080p when the capability
+    is on, as `hdr-pq` alone does. `unknown` next to audio tokens only is
+    still pending for the video (`declaration_pending`): an audio answer is
+    not an answer about HEVC. Adding audio tokens to a declaration with video
+    tokens changes no video decision
+    (`TestVideoRouteFor_AudioTokensDoNotMoveTheVideo`).
 - **Capability.** `--passthrough-video-codecs` / `PASSTHROUGH_VIDEO_CODECS`
   lists the source codecs passed through (`hevc`); empty — the default —
   passes none. `--passthrough-video-codecs-file` /
@@ -103,7 +116,11 @@ the client only declares what it decodes.
   byte those of 1b25e28 (`golden_old_route_test.go` records them there,
   `golden_route_test.go` replays them), apart from the deliberate seek fixes
   listed in `golden_old_route_test.go` (see
-  [FFmpeg Seek Strategy](#ffmpeg-seek-strategy)).
+  [FFmpeg Seek Strategy](#ffmpeg-seek-strategy)). Audio tokens that change
+  no audio output of the source change no argument, playlist, segment or
+  run either (only the route reason, which is a declaration's, see above);
+  the declared cases have their own record (`testdata/golden_audio.json`,
+  `golden_audio_test.go`).
 - **Output** (`services/passthrough_output.go`, `passthrough_web.go`), see
   [Passthrough output](#passthrough-output).
 
@@ -117,7 +134,9 @@ the client only declares what it decodes.
   -hls_fmp4_init_filename <prefix>-init-<gen>.mp4 -hls_segment_filename
   <run>/<prefix>-%d.m4s <run>/<prefix>.m3u8.ffmpeg`. Video
   `-c:v copy -bsf:v hevc_mp4toannexb -tag:v hvc1` (parameter sets out of the
-  samples, hvc1 for Apple), audio copied or encoded as on the old route.
+  samples, hvc1 for Apple), audio copied or encoded by the one audio
+  decision (see [Audio](#audio-multichannel-aac-and-dolby)): as on the old
+  route without audio tokens, E-AC-3 / AC-3 copied with `ec3` / `ac3`.
   Subtitles exactly as on the old route (segment muxer, webvtt). The video
   is cut at keyframes only.
 - **Init named after the process.** `<gen>` is the run process's generation,
@@ -134,12 +153,14 @@ the client only declares what it decodes.
   and waited for, and if that one ends too the answer is 504, logged as
   `the run ended before its init` — and writes the master from it: `CODECS` from the init's hvcC
   (`hevcCodecString`, ISO/IEC 14496-15 Annex E — `hevc_mp4toannexb`
-  rebuilds the record, so not the source's), `mp4a.40.2` when there is
-  audio, `RESOLUTION` from content-prober, `VIDEO-RANGE=PQ` for a source
+  rebuilds the record, so not the source's), then every codec the audio
+  renditions have (`mp4a.40.2` without audio tokens; `ec-3`, `ac-3` for
+  copied Dolby), `RESOLUTION` from content-prober, `VIDEO-RANGE=PQ` for a source
   whose transfer (above) is `smpte2084` (else `SDR`), `BANDWIDTH` = the
   larger of the source's
-  average bit rate and the first video segment's rate plus 192 kb/s of
-  audio. A profile, tier or level that differs from what the route was
+  average bit rate and the first video segment's rate plus the audio: 192 kb/s,
+  or with a declaration that changes the audio the largest audio output's
+  rate. A profile, tier or level that differs from what the route was
   decided on (`outputHVCC` of the source) is counted
   (`passthrough_codecs_mismatch_total{field}`);
   an init no CODECS can be read from is counted as `unbuildable` and the
@@ -169,6 +190,122 @@ the client only declares what it decodes.
 - **Cleanup.** Init files of earlier processes stay in the run directory
   (a few KB each, at most one per restart) and go with it when the run is
   cleaned up.
+
+### Audio (multichannel AAC and Dolby)
+
+Without audio tokens every audio track is what it always was: AAC with up
+to 2 channels copied, everything else encoded to AAC stereo
+(`<aacCodec> -ac 2`). The tokens change that per track; one function,
+`audioOutputFor` (`services/audio.go`), decides, and the run's arguments
+(`codecParams`), the re-encode seek cuts (`reencodeSeekCuts`, through
+`codecParams`), the masters and the run variant all read it.
+
+| Source track | Declared | fMP4 (passthrough) | Output |
+|---|---|---|---|
+| AAC ≤ 2 ch | anything | either | copy (as always) |
+| AAC 3–6 ch | `aac51` | either | copy (ADTS channel configuration 6 in TS) |
+| E-AC-3 > 2 ch | `ec3` | yes | copy (`ec-3`, `dec3` with the JOC extension when the stream has it) |
+| AC-3 > 2 ch | `ac3` | yes | copy (`ac-3`, `dac3`) |
+| any other > 2 ch (AAC 7.1, E-AC-3/AC-3 without their token or on TS, DTS, TrueHD, FLAC …) | `aac51` | either | `<aacCodec> -ac 6 -b:a 384k` |
+| everything else (stereo non-AAC included) | — | — | `<aacCodec> -ac 2`, as always |
+
+- **Dolby only on fMP4.** hls.js 1.6.14 (web-ui's full build) throws
+  "Unsupported EC-3 in M2TS" (`tsdemuxer.ts`) and plays AC-3 in TS only in
+  builds with it; the old route's audio is always TS and passthrough's always
+  fMP4, never mixed. **AC-3 needs `ac3`**: an E-AC-3 decoder decodes AC-3,
+  but the token is the browser's MediaSource answer for the codec string, and
+  the copy carries `ac-3`. **Stereo Dolby stays AAC stereo**: a copy gains
+  nothing audible there and leans on the browser's answer.
+- **384 kb/s.** Without `-b:a` libfdk_aac takes `(96·SCE + 128·CPE) ·
+  rate / 44` (`libfdk-aacenc.c`): 489 kb/s for 5.1 at 48 kHz. 384 kb/s is
+  64 kb/s per full channel, the stereo default's share, and the rate web-ui
+  asks `mediaCapabilities` about for `aac51`.
+- **Layout.** `-ac 6` asks for 6 channels in no order; FFmpeg takes the
+  encoder's first 6-channel layout (`ffmpeg_filter.c`, `set_channel_layout`),
+  libfdk_aac's `5.1` (FL FR FC LFE BL BR), and libswresample remixes into it
+  (`rematrix.c`). Measured on 8.1.2 through the transcoder's own options
+  (`e2e/audio/layout.py`, a tone in one channel at a time, −9.1 dB in):
+  - 5.1(side) (E-AC-3, AC-3, DTS, TrueHD): SL → BL and SR → BR at 1.0, every
+    other channel to itself, no level change;
+  - 7.1: SL mixed into BL and SR into BR at 1/√2; the BL row sums to 1.707
+    and, the output being S16 (libfdk_aac's only format), the matrix is
+    normalized by it: every channel −4.6 dB, SL/SR −7.6 dB (today's stereo
+    downmix of 7.1 is normalized by 3.1, −9.9 dB).
+- **Fallback.** `EncodeAudio` (after an ADTS failure) still encodes every
+  track: 5.1 where `aac51` gives 5.1 or a multichannel copy, stereo elsewhere.
+- **Master.** CODECS lists every audio codec the outputs have, once, in
+  rendition order (the old route's is `avc1.42e00a,mp4a.40.2` as always: all
+  its outputs are AAC). One audio group: RFC 8216 4.3.4.2 asks CODECS to name
+  every format of every rendition, hls.js keeps a variant only if MediaSource
+  takes every codec it lists (`level-controller.ts`), and it builds an
+  alternate audio track's SourceBuffer from the track's own init
+  (`passthrough-remuxer.ts` `getParsedTrackCodec`, `buffer-controller.ts`
+  `pickMostCompleteCodecName`; the variant's codec is used only when it lists
+  one audio codec), switching with `changeType`. When the declaration
+  changes the audio, each audio rendition says `CHANNELS` (the output's
+  count; E-AC-3 JOC would be `16/JOC` for Apple, but content-prober's answer
+  has no profile to tell it by, so it is the channel count) and `BANDWIDTH`
+  counts the largest audio output: an encode at its rate (384 kb/s, 192 kb/s
+  stereo), a copy at the stream's `bit_rate`, else mkvmerge's `BPS` tag, else
+  640 kb/s over 2 channels and 192 kb/s up to 2 — on the old route on top of
+  the video's rate (which alone it was, and stays without a declaration), on
+  passthrough instead of the 192 kb/s allowance. Codec rates, as the video's
+  is: MPEG-TS adds its own (AAC 5.1 at 385 kb/s came to 455 kb/s of TS
+  segments). In 24 h of production probes
+  (2026-09-28) E-AC-3 5.1 had a `bit_rate` in 406 of 409 streams (median
+  640, p90 768 kb/s), AC-3 5.1 in all but a few that have `BPS`; AAC 5.1
+  had it in 2 of 107, `BPS` in 52, neither in 53 (p90 449 kb/s).
+- **Run variant.** A declaration that changes an audio output gets runs of
+  its own: `HLS.runVariant` joins `hevc` (passthrough) and the audio variant,
+  `a` and one code per audio output (`c` copy, `2`/`6` the encode's
+  channels): key `{hashDir}:a6c:seek:{t}`, directory `a6c-seek-{t}`,
+  `hevc-accc6666-seek-{t}`. Without a change the part is empty and the key,
+  directory and argv are the old ones, so old and new pods of a rollout keep
+  sharing those runs. Declarations that give the same arguments share runs
+  (`ac3` on a TS session changes nothing). The remembered real start and
+  FFmpeg options are per key too (`fallbackKey`): a variant learns its own
+  fallbacks, at the price of one failed start of its own.
+- **Seeks.** A copied AAC 5.1 on the re-encode route is cut at the seek point
+  like copied stereo (`reencodeSeekCuts`); passthrough cuts every audio
+  output, copied Dolby included (`passthroughAudioMaps`); the copy route cuts
+  none. Measured on 8.1.2 (`e2e/audio/avsync_audio.py`, the served segments
+  as hls.js places them; positive: audio late; x265/x264 video with the
+  83 ms B-frame delay, libfdk_aac sources with 43 ms priming):
+
+  | Route, audio | A/V from the start | After a seek to 35 | Today (no tokens), after the seek |
+  |---|---|---|---|
+  | re-encode, AAC 5.1 copied (`aac51`) | −40 ms | −83 ms (audio at its movie time, 0.0 ms; the video 83 ms late) | −41 ms (AAC stereo encode) |
+  | same, without the cut | | +10 162 ms | |
+  | re-encode, E-AC-3 / FLAC 7.1 → AAC 5.1 | −41 ms | −41 ms | −41 ms |
+  | passthrough, E-AC-3 copied (`ec3`) | −78 ms | −14 ms | +43 ms (AAC stereo) |
+  | passthrough, AC-3 copied (`ac3`) | −78 ms | −14 ms | |
+  | passthrough, AAC 5.1 copied | −40 ms | −8 ms | |
+  | passthrough, E-AC-3 → AAC 5.1 | −40 ms | +43 ms | +43 ms |
+  | passthrough, DTS → AAC 5.1 | −30 ms | +54 ms | +54 ms (the DTS decoder's delay) |
+  | copy, AAC 5.1 copied | −40 ms | −8 ms | −8 ms |
+
+  From the start passthrough's error is the video's B-frame delay (hls.js
+  ignores the edit list) against the audio's own delay: AAC's priming hides
+  half of it, E-AC-3's 256 samples (5.3 ms) do not. After a seek a copy is
+  early by less than one audio frame (32 ms for E-AC-3, 21 ms for AAC at
+  48 kHz): the cut keeps the first packet at or after the zero, movenc
+  starts the track's `tfdt` at that packet (`mov_write_tfdt_tag`,
+  `cluster[0].dts - start_dts`, `start_dts` the first packet's DTS) and puts
+  the difference in the edit list, which hls.js ignores — the mechanism of
+  copied stereo AAC's −8 ms.
+- **Checked in Chrome 154 with hls.js 1.6.14** (`e2e/passthrough/page`,
+  `channels()`): AAC 5.1 in TS (re-encode route) and in fMP4 (passthrough),
+  copied and encoded, plays before and after a seek with no hls.js error or
+  stall; SourceBuffers `audio/mp4;codecs=mp4a.40.2`; WebAudio gets 6
+  channels, the source's silent LFE silent (index 3), the 7.1 source's front
+  channels at −4.6 dB. Chrome answers no to `ec-3` and `ac-3`, so a copied
+  Dolby track is not played there; that check is left to Safari and Edge.
+- **Not verified:** TrueHD 7.1 and E-AC-3 7.1 sources (FFmpeg's encoders stop
+  at 5.1; the 7.1 downmix was checked on FLAC 7.1, the same decoded layout),
+  a real E-AC-3 JOC (Atmos) stream, E-AC-3 with more than one independent
+  substream (movenc refuses it, `handle_eac3`: such a copy would fail the run),
+  AAC with a PCE (channel configuration 0) in TS, native HLS players and
+  their use of CHANNELS.
 
 ### Capabilities (GET /capabilities)
 
@@ -286,7 +423,7 @@ A `TranscodeRun` is one FFmpeg process writing segments to `{hashDir}/runs/seek-
 
 ### Run Identity
 
-Runs are keyed by `(hashDir, seekTime)`: `{hashDir}:seek:{t}`. Two sessions with the same source URL and same quantized seek time share the same run. A passthrough run is keyed `{hashDir}:hevc:seek:{t}` (`runKeyFor`): a passthrough and an old-route session of the same source never share a run, a directory, a remembered real start (`ResolvedStart`) or remembered FFmpeg options (`fallbackKey`). The old route's key, directory and options are the ones it always had, so the old and new pods of a rollout keep sharing its runs.
+Runs are keyed by `(hashDir, seekTime)`: `{hashDir}:seek:{t}`. Two sessions with the same source URL and same quantized seek time share the same run. A passthrough run is keyed `{hashDir}:hevc:seek:{t}` (`runKeyFor`): a passthrough and an old-route session of the same source never share a run, a directory, a remembered real start (`ResolvedStart`) or remembered FFmpeg options (`fallbackKey`). A session whose declaration changes an audio output has the audio variant in its key (`{hashDir}:a6c:seek:{t}`, `{hashDir}:hevc-accc6666:seek:{t}`; see [Audio](#audio-multichannel-aac-and-dolby)). The old route's key, directory and options are the ones it always had, so the old and new pods of a rollout keep sharing its runs.
 
 ### Seek Quantization
 
@@ -396,7 +533,7 @@ ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ... -ss 0 -map 0:{copi
   | After the seek, without the cut | +10 162 ms | 50.26 s |
   | After the seek, with the cut | −83 ms | 40.01 s |
 
-  hls.js places the audio by its PTS against the video's, so without the cut the sound played 10 s late for the whole run, and the media ended 10 s after the picture. Encoded tracks (AC3, 5.1 AAC, `EncodeAudio`) are left alone: the trim already cuts them.
+  hls.js places the audio by its PTS against the video's, so without the cut the sound played 10 s late for the whole run, and the media ended 10 s after the picture. Encoded tracks (AC3, 5.1 AAC without `aac51`, `EncodeAudio`) are left alone: the trim already cuts them. A 5.1 AAC copied for `aac51` is cut like the stereo one (the same decision, `audioOutputFor`): measured −83 ms after the seek, the audio at its movie time; +10 162 ms with the cut taken off it.
 - **`-ss 0` on each subtitle output** too. Subtitles never go through a filter graph (encoded to webvtt or copied), and matroskadec does not skip subtitle blocks before the keyframe it seeks to (`skip_to_keyframe` is for the other tracks). The cues between where the demuxer landed and `{time}` came out with negative times, and the output shifted them to zero like the audio's, so every later cue ran late against `#EXT-X-SESSION-OFFSET` (which is `{time}` on this route). Measured on 8.1.2, a seek to 35 (run at 30), cues at 21, 26, 33 s: served at 0.000, 5.000, 12.000 (the 33 s cue 9 s late, in hls.js and in subtitle-translate's cue + offset alike); with the cut, the cue at 33 s at 3.000 and nothing from before 30 s. With the cut an encoded cue that starts before `{time}` is dropped (`ffmpeg_enc.c`, `do_subtitle_out`), a copied webvtt one like copied audio; a cue still on screen at `{time}` is lost with it (FFmpeg compares the cue's start). That costs more for long cues — ASS signs and songs, forced subtitles — than for a typical 2–5 s line; `-ss` on an output does not trim a cue's start in FFmpeg 8.1.2, only drops or keeps it. The error was content-dependent: up to a GOP, and only when a cue fell between the landing keyframe and `{time}`.
 - On any seek (`{time}` > 0), `-xerror` is removed. AVI and other containers report non-fatal errors after a seek, and `-xerror` would turn them into a failed run.
 - From the start (`{time}` = 0) `-xerror` stays. Without it, a failed read of the source ends FFmpeg like the end of the file: exit 0, a completed run, and it is never restarted.
@@ -469,11 +606,17 @@ ffmpeg -ss {quantized} -noaccurate_seek -itsoffset {quantized - realStart} -i {u
   fixed that key's offset — up to a GOP off, subtitles with it — for the
   pod's life. Every probe is counted in
   `run_real_start_total{mode,result}`.
-- **Audio CODECS.** The master says `mp4a.40.2` for any AAC. hls.js 1.6.14
+- **Audio CODECS.** The master says `mp4a.40.2` for any AAC, `ec-3` /
+  `ac-3` for copied Dolby. hls.js 1.6.14
   builds its SourceBuffers from the codecs in the init segment
   (`passthrough-remuxer.ts`, `getParsedTrackCodec`), so a copied HE-AAC
   track is declared by its own `esds` there; what a native HLS player does
   with the mismatch is not verified (browser matrix).
+- **Copied E-AC-3 / AC-3** are cut at the zero like any audio output. movenc
+  merges E-AC-3 frames to 6 blocks per sample and writes `dec3` (with the
+  JOC extension of an Atmos stream) or `dac3` from the packets it has seen,
+  which hlsenc's `delay_moov` guarantees before the init is written.
+  Measured: −14 ms after a seek (see [Audio](#audio-multichannel-aac-and-dolby)).
 
 ## Player (player/index.html)
 
@@ -505,6 +648,8 @@ The player tracks `seekOffset` — the quantized seek position. Displayed time =
         a0.m3u8.ffmpeg
         ffmpeg.out, ffmpeg.err     # FFmpeg logs
       seek-480.000/                # Shared run: transcoding from 480s
+        ...
+      a6c-seek-0.000/              # A declaration that changes the audio: its own runs
         ...
       hevc-seek-0.000/             # Passthrough run from 0s
         v0-2160-init-{gen}.mp4     # Video init of process {gen} (one per process)

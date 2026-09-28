@@ -402,17 +402,17 @@ func TestPassthroughBandwidth(t *testing.T) {
 	for _, c := range []struct {
 		source, bytes int64
 		secs          float64
-		audio         bool
+		audio         int64
 		want          int64
 	}{
-		{40_000_000, 10_000_000, 10, true, 40_000_000},    // the average is higher
-		{5_000_000, 10_000_000, 10, true, 8_192_000},      // the first segment is
-		{5_000_000, 10_000_000, 10, false, 8_000_000},     // no audio group
-		{0, 10_000_000, 10, true, 8_192_000},              // no average
-		{0, 0, 0, false, 1},                               // nothing known
-		{3_000_000, 0, 10, true, 3_000_000},               // no segment size
-		{3_000_000, 1_000_000, 0, true, 3_000_000},        // no duration
-		{20_000_000, 59_000_000, 10.01, true, 47_344_847}, // a 4K GOP
+		{40_000_000, 10_000_000, 10, passthroughAudioBandwidth, 40_000_000}, // the average is higher
+		{5_000_000, 10_000_000, 10, passthroughAudioBandwidth, 8_192_000},   // the first segment is
+		{5_000_000, 10_000_000, 10, 0, 8_000_000},                           // no audio group
+		{0, 10_000_000, 10, passthroughAudioBandwidth, 8_192_000},           // no average
+		{0, 0, 0, 0, 1}, // nothing known
+		{3_000_000, 0, 10, passthroughAudioBandwidth, 3_000_000},               // no segment size
+		{3_000_000, 1_000_000, 0, passthroughAudioBandwidth, 3_000_000},        // no duration
+		{20_000_000, 59_000_000, 10.01, passthroughAudioBandwidth, 47_344_847}, // a 4K GOP
 	} {
 		if got := passthroughBandwidth(c.source, c.bytes, c.secs, c.audio); got != c.want {
 			t.Errorf("%+v: %d, want %d", c, got, c.want)
@@ -515,7 +515,7 @@ func TestPassthroughMaster_FromTheOutputInit(t *testing.T) {
 	f := sdrMain10()
 	f.HVCC = testHVCC(1, false, 63)
 	sdr.passFacts = &f
-	if got := sdr.passthroughMasterPlaylist("hvc1.1.6.L63.90", passthroughBandwidth(0, 1_000_000, 10, false)); got != "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1920x1080,CODECS=\"hvc1.1.6.L63.90\",VIDEO-RANGE=SDR\nv0-1080.m3u8\n" {
+	if got := sdr.passthroughMasterPlaylist("hvc1.1.6.L63.90", passthroughBandwidth(0, 1_000_000, 10, 0)); got != "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1920x1080,CODECS=\"hvc1.1.6.L63.90\",VIDEO-RANGE=SDR\nv0-1080.m3u8\n" {
 		t.Errorf("SDR master %q", got)
 	}
 }

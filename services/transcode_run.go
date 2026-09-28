@@ -891,8 +891,9 @@ func cutAtOutputStart(params []string, maps []string) []string {
 
 // reencodeSeekCuts are the -map values of the outputs a seek run of a
 // re-encoded video cuts at the seek point (cutAtOutputStart), with the
-// run's current options: every audio track that is copied, and every
-// subtitle output.
+// run's current options: every audio track that is copied (the decision of
+// audioOutputFor, through codecParams: AAC up to 2 channels, up to 6 with
+// aac51), and every subtitle output.
 //
 // The input seek lands on the keyframe at or before the seek point (for an
 // MKV with B-frames at or before the seek point minus 3/23 s,

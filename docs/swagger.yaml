@@ -68,7 +68,7 @@ paths:
         name: X-Source-Url
         type: string
       - description: 'What the client decodes, comma-separated tokens: hevc8, hevc10,
-          hevc8-2160, hevc10-2160, hevc-high, hdr-pq; or unknown'
+          hevc8-2160, hevc10-2160, hevc-high, hdr-pq; aac51, ac3, ec3; or unknown'
         in: query
         name: decode
         type: string

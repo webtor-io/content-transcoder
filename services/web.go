@@ -244,7 +244,7 @@ const (
 // @Produce json
 // @Param source_url query string false "Source media URL (alternative to X-Source-Url header)"
 // @Param X-Source-Url header string false "Source media URL (takes priority over query param)"
-// @Param decode query string false "What the client decodes, comma-separated tokens: hevc8, hevc10, hevc8-2160, hevc10-2160, hevc-high, hdr-pq; or unknown"
+// @Param decode query string false "What the client decodes, comma-separated tokens: hevc8, hevc10, hevc8-2160, hevc10-2160, hevc-high, hdr-pq; aac51, ac3, ec3; or unknown"
 // @Success 200 {object} sessionCreateResponse
 // @Failure 400 {string} string "Missing or invalid source_url"
 // @Failure 415 {string} string "Source cannot be transcoded (resolution over 1080p or transcoding disabled); reason in X-Video-Route-Reason"
@@ -363,6 +363,17 @@ func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclarati
 	}
 	if hls.passthrough {
 		hls.passFacts = route.facts
+	}
+	// The audio after the route: E-AC-3 and AC-3 are copied only on fMP4
+	// audio, which only passthrough has (audioOutputFor).
+	hls.useAudioDecoders(decl.audioDecoders())
+	if v := hls.audioVariant(); v != "" {
+		log.WithFields(log.Fields{
+			"source": redactSecrets(sourceURL),
+			"decode": decl.String(),
+			"audio":  v,
+			"codecs": hls.audioCodecs(),
+		}).Info("session: audio")
 	}
 	// Content with neither video nor audio is refused before a session
 	// exists: GetFFmpegParams would refuse it too, but only when FFmpeg is

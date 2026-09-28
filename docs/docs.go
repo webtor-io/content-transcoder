@@ -66,7 +66,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "What the client decodes, comma-separated tokens: hevc8, hevc10, hevc8-2160, hevc10-2160, hevc-high, hdr-pq; or unknown",
+                        "description": "What the client decodes, comma-separated tokens: hevc8, hevc10, hevc8-2160, hevc10-2160, hevc-high, hdr-pq; aac51, ac3, ec3; or unknown",
                         "name": "decode",
                         "in": "query"
                     }

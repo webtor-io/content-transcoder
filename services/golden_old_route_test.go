@@ -27,6 +27,22 @@ package services
 //     h264-2160-eac3-subs), and "-ss", "0" before the "-map" of each
 //     subtitle output (h264-2160-eac3-subs: 0:2 subrip and 0:4 ass; the PGS
 //     track has no output).
+//
+// Declared audio (decode=aac51, ac3, ec3) is not in this record: the
+// record is the old route without a declaration, and it stays so for every
+// declaration that changes no audio output. The declared cases have their
+// own record, testdata/golden_audio.json, taken on this code
+// (golden_audio_test.go, GOLDEN_AUDIO_WRITE):
+//   - ts_aac51: passthrough not configured, decode=aac51, every source here
+//     and two with every kind of multichannel track (h264-1080-surround,
+//     hevc-1080-surround). A source without a track over 2 channels in a
+//     session that opens answers byte for byte as recorded here; the
+//     others (h264-2160-eac3-subs, hevc-800-ac3-dvdsub, audio-only-flac-51,
+//     the surround ones) do not;
+//   - passthrough_aac51_ec3: the capability hevc, decode=hevc10,aac51,ec3;
+//     hevc-1080-main10-aac, hevc-800-ac3-dvdsub and hevc-1080-surround pass
+//     through (E-AC-3 copied, CODECS "...,mp4a.40.2,ec-3"), the rest takes
+//     the old route with the declared audio.
 
 import (
 	"context"

@@ -59,9 +59,11 @@ func runKey(hashDir string, seekTime float64) string {
 	return fmt.Sprintf("%s:seek:%.3f", hashDir, seekTime)
 }
 
-// runKeyFor is the key of a run of h: runKey for the old route, unchanged
-// so the old and the new pod of a rollout keep sharing its runs, and
-// "<hashDir>:<variant>:seek:<t>" for passthrough (HLS.runVariant).
+// runKeyFor is the key of a run of h: runKey for the old route with the
+// audio it always had, unchanged so the old and the new pod of a rollout
+// keep sharing its runs, and "<hashDir>:<variant>:seek:<t>" for any other
+// (HLS.runVariant: passthrough, a declaration that changes an audio output,
+// or both -- "hevc", "a6c", "hevc-a6c").
 func runKeyFor(hashDir string, h *HLS, seekTime float64) string {
 	if v := h.runVariant(); v != "" {
 		return fmt.Sprintf("%s:%s:seek:%.3f", hashDir, v, seekTime)
@@ -70,9 +72,12 @@ func runKeyFor(hashDir string, h *HLS, seekTime float64) string {
 }
 
 // fallbackKey is what the options a failed run turned out to need are
-// remembered under: the source, and the route unless it is the old one. A
-// copy of HEVC out of an MKV trips over timestamps where an encode does
-// not, and must not take -xerror off the old route of the same file.
+// remembered under: the source, and the run variant unless it is the old
+// route's. A copy of HEVC out of an MKV trips over timestamps where an
+// encode does not, and must not take -xerror off the old route of the same
+// file; a copied E-AC-3 or AAC 5.1 can fail where the stereo encode of the
+// same track does not, likewise. The price: a variant learns its options
+// on its own, one failed start of its own.
 func fallbackKey(hashDir string, h *HLS) string {
 	if v := h.runVariant(); v != "" {
 		return hashDir + ":" + v
