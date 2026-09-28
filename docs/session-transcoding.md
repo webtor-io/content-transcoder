@@ -205,10 +205,10 @@ to 2 channels copied, everything else encoded to AAC stereo
 | Source track | Declared | fMP4 (passthrough) | Output |
 |---|---|---|---|
 | AAC ≤ 2 ch | anything | either | copy (as always) |
-| AAC 3–6 ch | `aac51` | either | copy (ADTS channel configuration 6 in TS) |
+| AAC 3–6 ch in a channel configuration (layout `3.0`, `4.0`, `5.0`, `5.1`) | `aac51` | either | copy (its ADTS channel configuration, 6 for 5.1, in TS) |
 | E-AC-3 > 2 ch | `ec3` | yes | copy (`ec-3`, `dec3` with the JOC extension when the stream has it) |
 | AC-3 > 2 ch | `ac3` | yes | copy (`ac-3`, `dac3`) |
-| any other > 2 ch (AAC 7.1, E-AC-3/AC-3 without their token or on TS, DTS, TrueHD, FLAC …) | `aac51` | either | `<aacCodec> -ac 6 -b:a 384k` |
+| any other > 2 ch (AAC 7.1, AAC with a PCE, E-AC-3/AC-3 without their token or on TS, DTS, TrueHD, FLAC …) | `aac51` | either | `<aacCodec> -ac 6 -b:a 384k` |
 | everything else (stereo non-AAC included) | — | — | `<aacCodec> -ac 2`, as always |
 
 - **Dolby only on fMP4.** hls.js 1.6.14 (web-ui's full build) throws
@@ -218,6 +218,20 @@ to 2 channels copied, everything else encoded to AAC stereo
   but the token is the browser's MediaSource answer for the codec string, and
   the copy carries `ac-3`. **Stereo Dolby stays AAC stereo**: a copy gains
   nothing audible there and leans on the browser's answer.
+- **AAC only in a channel configuration.** An AAC track whose channels a
+  program config element (PCE, channel configuration 0) declares is not
+  played by Chrome 154 with hls.js 1.6.14 in TS or fMP4 (MediaError 4,
+  `bufferAppendError`), and FFmpeg copies it without a word (exit 0). The
+  copy is kept for the layouts of configurations 3–6 as FFmpeg names them
+  (`aacConfigLayouts`: `3.0`, `4.0`, `5.0`, `5.1` — `ff_aac_ch_layout`; the
+  decoder names a stream's layout from its elements, so that is what
+  ffprobe, and content-prober, reports). Anything else is a PCE and is
+  encoded to 5.1: FFmpeg's own encoder writes one for 5.1(side) (ffprobe:
+  no layout — 9 of 526 six-channel AAC tracks in 24 h of production
+  probes), quad and 2.1 (`quad`, `2.1`). libfdk_aac maps 5.1(side) to
+  configuration 6 (`5.1`). A PCE that declares exactly a configuration's
+  elements would be named like it and still be copied: content-prober gives
+  no extradata to tell; FFmpeg's encoder never writes one.
 - **384 kb/s.** Without `-b:a` libfdk_aac takes `(96·SCE + 128·CPE) ·
   rate / 44` (`libfdk-aacenc.c`): 489 kb/s for 5.1 at 48 kHz. 384 kb/s is
   64 kb/s per full channel, the stereo default's share, and the rate web-ui
@@ -309,8 +323,7 @@ to 2 channels copied, everything else encoded to AAC stereo
   at 5.1; the 7.1 downmix was checked on FLAC 7.1, the same decoded layout),
   a real E-AC-3 JOC (Atmos) stream, E-AC-3 with more than one independent
   substream (movenc refuses it, `handle_eac3`: such a copy would fail the run),
-  AAC with a PCE (channel configuration 0) in TS, native HLS players and
-  their use of CHANNELS.
+  native HLS players and their use of CHANNELS.
 
 ### Capabilities (GET /capabilities)
 

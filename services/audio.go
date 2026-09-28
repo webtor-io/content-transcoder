@@ -14,10 +14,12 @@ import (
 // is copied, every other track is encoded to AAC stereo (-ac 2). The audio
 // tokens of the client's declaration (route.go) change it:
 //
-//   - aac51: AAC with 3 to 6 channels is copied; every other track with
-//     more than 2 channels (E-AC-3, AC-3, DTS, TrueHD, AAC 7.1, FLAC ...)
-//     is encoded to AAC 5.1 at aac51BitRate. AAC 5.1 goes into MPEG-TS
-//     (ADTS channel configuration 6) as well as into fMP4.
+//   - aac51: AAC with 3 to 6 channels in one of the MPEG-4 channel
+//     configurations 3 to 6 (aacConfigLayouts) is copied; every other
+//     track with more than 2 channels (E-AC-3, AC-3, DTS, TrueHD, AAC 7.1,
+//     AAC with a program config element, FLAC ...) is encoded to AAC 5.1
+//     at aac51BitRate. AAC 5.1 goes into MPEG-TS (ADTS channel
+//     configuration 6) as well as into fMP4.
 //   - ec3, ac3: an E-AC-3 or AC-3 track with more than 2 channels is
 //     copied, as it is (Atmos, E-AC-3 JOC, included), on fMP4 audio only:
 //     hls.js 1.6.14 refuses E-AC-3 in MPEG-TS (tsdemuxer.ts, "Unsupported
@@ -88,6 +90,26 @@ const (
 	copiedMultichannelBitRate = 640_000
 )
 
+// aacConfigLayouts are the channel layouts, as FFmpeg names them
+// (libavutil/channel_layout.c), of MPEG-4 audio channel configurations 3
+// to 6, the ones ADTS can say without a program config element (PCE): 3.0
+// (FC FL FR), 4.0 (and BC), 5.0 (FC FL FR BL BR), 5.1 (and LFE) --
+// ff_aac_ch_layout in FFmpeg 8.1.2's libavcodec/aac/aacdec_tab.c. The AAC
+// decoder names a stream's layout from its elements (sniff_channel_order),
+// so these are what ffprobe, and so content-prober, reports for those
+// configurations; a stream whose elements a PCE declares gets another name
+// or none: FFmpeg's own encoder writes a PCE for 5.1(side) ("unknown" to
+// ffprobe, as in 9 of 526 six-channel AAC tracks in 24 h of production
+// probes), quad ("quad") and 2.1 ("2.1"). Chrome 154 with hls.js 1.6.14
+// plays no such copy, in MPEG-TS or fMP4 (MediaError 4, bufferAppendError;
+// FFmpeg exits 0, so nothing on our side sees it): a PCE track is encoded
+// to 5.1 like any other multichannel track. What the name cannot tell: a
+// PCE that declares exactly a configuration's elements is reported under
+// the configuration's name (content-prober gives no extradata to read the
+// configuration from); FFmpeg's encoder never writes one, libfdk_aac maps
+// 5.1(side) to configuration 6.
+var aacConfigLayouts = map[string]bool{"3.0": true, "4.0": true, "5.0": true, "5.1": true}
+
 // audioOutputFor decides the output of audio stream s for a client that
 // decodes d, on fMP4 (a passthrough session) or MPEG-TS; opts.EncodeAudio
 // (the fallback after an ADTS failure) forces an encode: 5.1 with aac51,
@@ -101,7 +123,7 @@ func audioOutputFor(s *cp.Stream, d audioDecoders, fmp4 bool, opts ParamOptions)
 				ch = 2
 			}
 			return audioOutput{copy: true, channels: ch, codecs: codecsAAC}
-		case codec == "aac" && ch <= 6 && d.aac51:
+		case codec == "aac" && ch <= 6 && d.aac51 && aacConfigLayouts[s.GetChannelLayout()]:
 			return audioOutput{copy: true, channels: ch, codecs: codecsAAC}
 		case codec == "eac3" && ch > 2 && d.ec3 && fmp4:
 			return audioOutput{copy: true, channels: ch, codecs: codecsEC3}

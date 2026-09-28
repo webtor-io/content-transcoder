@@ -19,7 +19,7 @@ func seekCutHLS(videoCodec string) *HLS {
 		{Index: 0, CodecType: "video", CodecName: videoCodec, Width: 1920, Height: 1080},
 		{Index: 1, CodecType: "audio", CodecName: "aac", Channels: 2},
 		{Index: 2, CodecType: "audio", CodecName: "ac3", Channels: 6},
-		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6},
+		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6, ChannelLayout: "5.1"},
 		{Index: 4, CodecType: "subtitle", CodecName: "subrip"},
 		{Index: 5, CodecType: "subtitle", CodecName: "hdmv_pgs_subtitle"},
 		{Index: 6, CodecType: "subtitle", CodecName: "dvd_subtitle"},

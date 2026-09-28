@@ -44,7 +44,7 @@ func surroundStreams(codec string) []*cp.Stream {
 		{Index: 0, CodecType: "video", CodecName: codec, Width: 1920, Height: 1080},
 		{Index: 1, CodecType: "audio", CodecName: "aac", Channels: 2, Tags: map[string]string{"language": "eng"}},
 		{Index: 2, CodecType: "audio", CodecName: "eac3", Channels: 6, BitRate: "640000", Tags: map[string]string{"language": "eng", "title": "Atmos"}},
-		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6, Tags: map[string]string{"language": "rus", "BPS": "384123"}},
+		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6, ChannelLayout: "5.1", Tags: map[string]string{"language": "rus", "BPS": "384123"}},
 		{Index: 4, CodecType: "audio", CodecName: "ac3", Channels: 6, BitRate: "448000"},
 		{Index: 5, CodecType: "audio", CodecName: "aac", Channels: 8},
 		{Index: 6, CodecType: "audio", CodecName: "dts", Channels: 6, BitRate: "1509000"},

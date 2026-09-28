@@ -11,8 +11,19 @@ import (
 	cp "github.com/webtor-io/content-prober/content-prober"
 )
 
+// aacLayouts are ffprobe's layouts of AAC tracks in the channel
+// configurations (no PCE) of each count: what content-prober reports for
+// almost every AAC track in production (stereo, 5.1, mono, 7.1).
+var aacLayouts = map[int32]string{1: "mono", 2: "stereo", 3: "3.0", 4: "4.0", 5: "5.0", 6: "5.1", 8: "7.1"}
+
+// audioStream is a track of codec with channels channels; an AAC one has
+// the layout of its channel configuration (aacLayouts).
 func audioStream(codec string, channels int32) *cp.Stream {
-	return &cp.Stream{Index: 1, CodecType: "audio", CodecName: codec, Channels: channels}
+	s := &cp.Stream{Index: 1, CodecType: "audio", CodecName: codec, Channels: channels}
+	if codec == "aac" {
+		s.ChannelLayout = aacLayouts[channels]
+	}
+	return s
 }
 
 var (
@@ -89,6 +100,49 @@ func TestAudioOutputFor_Table(t *testing.T) {
 	}
 }
 
+// AAC over 2 channels is copied with aac51 only in a channel
+// configuration (3.0, 4.0, 5.0, 5.1); with a program config element --
+// ffprobe's "unknown", 5.1(side), quad, 2.1, whatever is not one of those
+// -- it is encoded to 5.1, on both routes.
+func TestAudioOutputFor_AACLayouts(t *testing.T) {
+	surround := audioOutput{channels: 6, codecs: codecsAAC}
+	for _, c := range []struct {
+		ch     int32
+		layout string
+		copy   bool
+	}{
+		{3, "3.0", true}, {4, "4.0", true}, {5, "5.0", true}, {6, "5.1", true},
+		// PCE: FFmpeg's encoder on 5.1(side) ("unknown", as ffprobe says
+		// it and content-prober leaves it out), on quad and on 2.1.
+		{6, "", false}, {6, "unknown", false}, {6, "5.1(side)", false},
+		{5, "5.0(side)", false}, {4, "quad", false}, {3, "2.1", false},
+		{3, "3.0(back)", false}, {6, "6.0", false}, {6, "hexagonal", false},
+	} {
+		s := &cp.Stream{Index: 1, CodecType: "audio", CodecName: "aac", Channels: c.ch, ChannelLayout: c.layout}
+		for _, fmp4 := range []bool{false, true} {
+			got := audioOutputFor(s, aac51Only, fmp4, ParamOptions{})
+			want := surround
+			if c.copy {
+				want = audioOutput{copy: true, channels: int(c.ch), codecs: codecsAAC}
+			}
+			if got != want {
+				t.Errorf("aac %d %q fmp4=%v: %+v, want %+v", c.ch, c.layout, fmp4, got, want)
+			}
+			// Without aac51 every one of them is AAC stereo, as always.
+			if got := audioOutputFor(s, audioDecoders{ac3: true, ec3: true}, fmp4, ParamOptions{}); got != (audioOutput{channels: 2, codecs: codecsAAC}) {
+				t.Errorf("aac %d %q without aac51: %+v", c.ch, c.layout, got)
+			}
+		}
+	}
+	// Stereo and mono are copied whatever the layout says, as always.
+	for _, l := range []string{"", "unknown", "stereo", "mono", "downmix"} {
+		s := &cp.Stream{Index: 1, CodecType: "audio", CodecName: "aac", Channels: 2, ChannelLayout: l}
+		if got := audioOutputFor(s, allAudio, false, ParamOptions{}); !got.copy {
+			t.Errorf("aac stereo %q: %+v", l, got)
+		}
+	}
+}
+
 // EncodeAudio (the fallback after an ADTS failure) encodes every track: 5.1
 // where aac51 would have given 5.1 or a multichannel copy, stereo
 // elsewhere.
@@ -123,7 +177,7 @@ func TestAudioCodecParams(t *testing.T) {
 		{Index: 0, CodecType: "video", CodecName: "h264", Height: 1080},
 		{Index: 1, CodecType: "audio", CodecName: "aac", Channels: 2},
 		{Index: 2, CodecType: "audio", CodecName: "eac3", Channels: 6},
-		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6},
+		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6, ChannelLayout: "5.1"},
 	}}, &HLSConfig{sm: Online, aacCodec: "libfdk_aac"})
 	check := func(label string, want [][]string) {
 		t.Helper()
@@ -251,7 +305,7 @@ func surroundHLS(t *testing.T, videoCodec string, passthrough bool) *HLS {
 		{Index: 0, CodecType: "video", CodecName: videoCodec, Width: 1920, Height: 1080},
 		{Index: 1, CodecType: "audio", CodecName: "aac", Channels: 2},
 		{Index: 2, CodecType: "audio", CodecName: "eac3", Channels: 6, BitRate: "640000"},
-		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6, Tags: map[string]string{"BPS": "384123"}},
+		{Index: 3, CodecType: "audio", CodecName: "aac", Channels: 6, ChannelLayout: "5.1", Tags: map[string]string{"BPS": "384123"}},
 		{Index: 4, CodecType: "audio", CodecName: "ac3", Channels: 6, BitRate: "448000"},
 		{Index: 5, CodecType: "audio", CodecName: "aac", Channels: 8},
 		{Index: 6, CodecType: "audio", CodecName: "dts", Channels: 6, BitRate: "1509000"},
