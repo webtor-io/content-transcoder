@@ -50,6 +50,11 @@ func RegisterWebFlags(f []cli.Flag) []cli.Flag {
 		Name:   webPlayerFlag,
 		Usage:  "player",
 		EnvVar: "PLAYER",
+	}, cli.DurationFlag{
+		Name:   webUnknownSessionDelayFlag,
+		Usage:  "hold a GET/HEAD of a playlist, segment or init of a session this pod does not have this long before its 404, to slow players that ask again at once; 0 answers at once. Keep it under 2.5s (a TTFB bucket bound in torrent-http-proxy) and hls.js's 10s time to first byte",
+		Value:  defaultUnknownSessionDelay,
+		EnvVar: "UNKNOWN_SESSION_DELAY",
 	})
 }
 
@@ -70,6 +75,11 @@ type Web struct {
 	// gs drains in-flight requests on Close, up to WEB_SHUTDOWN_TIMEOUT,
 	// instead of dropping them with the listener.
 	gs *cs.GracefulServer
+	// unknownSessionDelay holds the 404 of a playlist or segment request
+	// for a session this pod does not have (unknown_session.go); 0, the
+	// zero value, answers at once.
+	unknownSessionDelay time.Duration
+	unknownSessions     unknownSessionLog
 }
 
 func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, sessionManager *SessionManager, touchMap *TouchMap) *Web {
@@ -84,6 +94,8 @@ func NewWeb(c *cli.Context, contentProbe *ContentProbe, hlsBuilder *HLSBuilder, 
 		touchMap:       touchMap,
 		sourceProber:   newSourceProber(),
 		gs:             cs.NewGracefulServer(cs.ShutdownTimeout(c)),
+
+		unknownSessionDelay: c.Duration(webUnknownSessionDelayFlag),
 	}
 	we.buildHandler()
 	return we
@@ -644,7 +656,7 @@ func (s *Web) sessionRouter(w http.ResponseWriter, r *http.Request) {
 
 	sess := s.sessionManager.Get(sessionID)
 	if sess == nil {
-		http.Error(w, "session not found", http.StatusNotFound)
+		s.sessionNotFound(w, r, sessionID, subPath)
 		return
 	}
 
@@ -752,7 +764,7 @@ func (s *Web) sessionCloseHandler(w http.ResponseWriter, r *http.Request, sess *
 // @Param sessionId path string true "Session ID"
 // @Param stream path string true "Playlist name (index.m3u8, v0-720.m3u8, a0.m3u8, etc.)"
 // @Success 200 {string} string "HLS playlist"
-// @Failure 404 {string} string "Session or playlist not found"
+// @Failure 404 {string} string "Session or playlist not found; for a session this pod does not hold (expired after 10 min without a request, or lost on a rollout) not before UNKNOWN_SESSION_DELAY, 2 s by default"
 // @Failure 504 {string} string "Timeout waiting for playlist"
 // @Router /session/{sessionId}/{stream}.m3u8 [get]
 // sessionMasterPlaylist reads the session's master playlist from disk and
@@ -888,7 +900,7 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 // @Param sessionId path string true "Session ID"
 // @Param segment path string true "Segment filename (e.g., v0-720-0.ts, a0-5.ts)"
 // @Success 200 {file} binary "Segment data"
-// @Failure 404 {string} string "Session not found"
+// @Failure 404 {string} string "Session not found; not before UNKNOWN_SESSION_DELAY, 2 s by default (a session this pod does not hold: expired after 10 min without a request, or lost on a rollout)"
 // @Failure 504 {string} string "Timeout waiting for segment"
 // @Router /session/{sessionId}/{segment} [get]
 func (s *Web) sessionSegmentHandler(w http.ResponseWriter, r *http.Request, sess *Session, filename string) {

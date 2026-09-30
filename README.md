@@ -65,6 +65,26 @@ sources a player can decode as they are play there as well.
 `{"passthrough_video_codecs":["hevc"]}` or `[]` — for a service that must
 not promise what the transcoder will not do (web-ui's Discover asks it).
 
+## Requests for a session this pod does not have
+
+A session is held in the memory of one pod. It is removed after 10 minutes
+without a request, and every session on a pod is lost when the pod is
+replaced. A request for such a session gets `404 session not found`. For a
+GET or HEAD of a playlist, segment or init, that 404 comes only after a delay,
+so that a player that asks again the moment it gets a 404 asks at most once
+per delay per loader
+(see [docs/session-transcoding.md](docs/session-transcoding.md), "Unknown session"):
+
+```
+--unknown-session-delay value  hold the 404 this long; 0 answers at once (default: 2s) [$UNKNOWN_SESSION_DELAY]
+```
+
+A proxy that measures the transcoder's time to first byte counts these 404s
+at the delay. torrent-http-proxy files them under status class 400, so read
+the transcoder's latency without that class (`status!="400"`): with it, a
+p95 sits near the delay whenever abandoned tabs are open (on webtor.io, all
+day).
+
 ## Example
 ```
 cd server &&

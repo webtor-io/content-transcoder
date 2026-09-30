@@ -271,7 +271,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Session not found",
+                        "description": "Session not found; not before UNKNOWN_SESSION_DELAY, 2 s by default (a session this pod does not hold: expired after 10 min without a request, or lost on a rollout)",
                         "schema": {
                             "type": "string"
                         }
@@ -319,7 +319,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Session or playlist not found",
+                        "description": "Session or playlist not found; for a session this pod does not hold (expired after 10 min without a request, or lost on a rollout) not before UNKNOWN_SESSION_DELAY, 2 s by default",
                         "schema": {
                             "type": "string"
                         }

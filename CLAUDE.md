@@ -83,6 +83,7 @@ Session API:
 - `GET /session/{id}/{stream}.m3u8` — Variant playlist (polls .ffmpeg file)
 - `GET /session/{id}/{segment}.ts` — Segment file (auto-restarts FFmpeg if needed)
 - `GET /session/{id}/{segment}.m4s`, `GET /session/{id}/{stream}-init-{gen}.mp4` — fMP4 segment and init of a passthrough session (HEVC as it is); 404 on the old route. See docs/session-transcoding.md, Passthrough output
+- A session this pod does not hold (expired after 10 min idle, lost on a rollout): `404 session not found`. For a GET/HEAD of a playlist, segment or init, the 404 comes after `UNKNOWN_SESSION_DELAY` (2 s). This slows players that ask again the moment a 404 arrives (`services/unknown_session.go`, docs/session-transcoding.md, "Unknown session"). Seek, DELETE and 404s inside a live session are answered at once
 
 Capabilities:
 - `GET /capabilities` — `{"passthrough_video_codecs":[...]}`, what a session opened now passes through (the capability file re-read as for POST /session; `[]`, never null, when none). For services (web-ui's Discover), no CORS; no session, run or metric is touched. See docs/session-transcoding.md, Capabilities
@@ -132,5 +133,6 @@ Depends on codec mode:
 | `--disable-video-transcoding` | `DISABLE_VIDEO_TRANSCODING` | false | Skip video re-encoding |
 | `--passthrough-video-codecs` | `PASSTHROUGH_VIDEO_CODECS` | empty | Source video codecs handed to players as they are (`hevc`); empty passes none. See docs/session-transcoding.md, Video Route |
 | `--passthrough-video-codecs-file` | `PASSTHROUGH_VIDEO_CODECS_FILE` | empty | File with the same list, re-read on change (ConfigMap switch without restart); overrides the flag |
+| `--unknown-session-delay` | `UNKNOWN_SESSION_DELAY` | 2s | Hold of the 404 of a playlist/segment request for a session this pod does not have; 0 answers at once. Keep < 2.5s (thp TTFB bucket) and < 10s (hls.js TTFB). thp records the held 404s in the transcoder's TTFB at ~2 s (status 400): TranscoderTTFBSlow and the TTFB panels must select `status!="400"`, shipped with this |
 | `--debug` | `DEBUG` | false | Enable debug logging |
 | `--clean-on-startup` | `CLEAN_ON_STARTUP` | false | Clean output directory on startup |

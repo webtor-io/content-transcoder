@@ -83,6 +83,15 @@ const (
 	failureOther          = "other"
 )
 
+// Answers to a request for a session this pod does not hold
+// (Web.sessionNotFound): the 404 after the tarpit's wait, the client gone
+// during it, or at once (not a playlist or segment GET, or the wait off).
+const (
+	unknownSessionDelayed   = "delayed"
+	unknownSessionCanceled  = "canceled"
+	unknownSessionImmediate = "immediate"
+)
+
 // Source probe outcomes (ContentProbe).
 const (
 	probeOutcomeOK    = "ok"
@@ -240,6 +249,11 @@ var (
 		Name:      "run_real_start_total",
 		Help:      "Probes of where a seek run of a copied video (copy, passthrough) really starts, by run mode and result (ok; failed: error or timeout; implausible: a keyframe after the seek or over 60 s before it). Not ok: the run reports the quantized seek, its timeline and subtitles off by up to a GOP.",
 	}, []string{"mode", "result"})
+	metricUnknownSessionTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsNamespace,
+		Name:      "unknown_session_requests_total",
+		Help:      "Requests for a session this pod does not hold (expired after 10 min idle, lost with its pod, never here), by answer: delayed (a playlist or segment GET/HEAD answered 404 after UNKNOWN_SESSION_DELAY, the tarpit for players that ask again at once), canceled (the client left during that wait), immediate (any other request, or the delay off).",
+	}, []string{"answer"})
 	metricSessionSegmentsServed = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: metricsNamespace,
 		Name:      "session_segments_served",
@@ -282,6 +296,9 @@ func init() {
 	}
 	for _, r := range []string{sourceProbeOK, sourceProbeFailed} {
 		metricSourceProbeSeconds.WithLabelValues(r)
+	}
+	for _, a := range []string{unknownSessionDelayed, unknownSessionCanceled, unknownSessionImmediate} {
+		metricUnknownSessionTotal.WithLabelValues(a)
 	}
 	for _, m := range []string{runModeCopy, runModePassthrough} {
 		for _, r := range []string{realStartOK, realStartFailed, realStartImplausible} {

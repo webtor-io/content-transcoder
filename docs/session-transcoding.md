@@ -494,6 +494,89 @@ This fallback only protects the video from a subtitle track that is slow. A subt
 - **10min idle** → Session removed entirely
 - **Run with 0 refs** → 30s grace period, then FFmpeg stopped and directory cleaned
 
+### Unknown session: the 404 is held
+
+A session lives in one pod's memory. After 10 min without a request it is
+removed, and a transcoder rollout loses all of them. A request for such a
+session gets `404 session not found`: nothing on this pod can bring it back.
+
+A GET or HEAD of a playlist, segment or init (`.m3u8`, `.ts`, `.vtt`, `.m4s`,
+`.mp4`) gets that 404 only after `UNKNOWN_SESSION_DELAY` (`--unknown-session-delay`,
+default 2 s, `0` answers at once). A client that hangs up during the wait ends
+it at once.
+
+**Why.** web-ui's player calls `hls.startLoad()` on every fatal network error,
+with no delay and no limit. hls.js does not retry a 4xx and makes it fatal. A
+tab left on a dead session (paused past 10 min, hidden, abandoned, or open
+through a rollout) therefore asks again the moment its 404 arrives: up to 66
+requests a second, for as long as the tab is open. On 2026-09-29 that was 2.27M
+404s a day, 91% of them from four tabs. Each hls.js loader has one request in
+flight, so a 2 s answer caps such a tab at about 1.5 requests a second (three
+loaders). This works for tabs that run old JavaScript, from the day it is
+deployed.
+
+**What is not held**, and why:
+
+- The seek (`POST`, and the `GET` of its offset that the player makes once),
+  `DELETE`, the bare session URL and any other file. These are one-shot calls
+  that act on the answer, never a loop: 54 such 404s in 21 h.
+- A 404 inside a session the pod holds (`not found`, `init not found`). The
+  hold is only for a failed session lookup.
+- `GET /index.m3u8?done=true`, rest-api's CacheMap probe. The legacy route
+  answers it, not the session router.
+
+**Who else gets this 404** (checked 2026-09-29 against 21 h of proxy logs and
+45 h of session lifecycles):
+
+- subtitle-translate reads a playlist 404 as "session over" and stops (30 s
+  fetch timeout). It gets the same answer, 2 s later, once.
+- web-ui's warmup (`bufferSessionHLS`) reads a 404 body as an empty playlist
+  and polls again every 2 s until its deadline. With the hold it polls every
+  4 s, with the same outcome. No session got a 404 while it was being warmed
+  up: 0 of 1473 sessions created had one within 60 s of creation, and all
+  1.93M session 404s came from external callers.
+- A session asked on another pod while it lives: 7 requests, 2 s before a
+  rollout closed the pod that held it. The session was gone either way.
+
+**The transcoder's TTFB is read without class 400.** A held 404 writes its
+body when the wait ends, so torrent-http-proxy records it in
+`webtor_http_proxy_request_ttfb_seconds{name="content-transcoder"}` under
+`status="400"`, at about 2 s. Dead tabs are there all day, not now and then:
+every 5-minute window of 2026-09-28/29 had 6 to 25 dead session ids asking.
+Replayed with the hold, that day's held 404s are about 13% of the
+transcoder's TTFB observations (6% at the least), and a p95 over all statuses
+reads about 2 s (1.4 s at the least) in every 10-minute window, against a
+measured median of 0.03 s. That hides every real slowdown under 2.5 s, and
+`TranscoderTTFBSlow` needs a larger share of real slow answers to fire. So
+the alert and every transcoder TTFB panel must select `status!="400"`, and
+the hold ships together with that change, not after it.
+
+Class 400 carries no latency worth keeping. In the 7 days to 2026-09-30 it
+had 192 of the 34,348 transcoder answers slower than 1 s (0.6%). A 404 inside
+a live session is answered at once, and a request that got no byte (a client
+that left during the wait: a 499 in thp) is not observed at all. Class 500
+stays in: `segment timeout` and `playlist timeout` come after a wait, which
+is why the filter is `!="400"` and not `="200"`. The filter was due before the
+hold too. While dead tabs made 58–99% of the observations (the seeder outage
+of 2026-09-24, 08:00–10:40Z), their immediate 404s held the unfiltered p95 at
+0.005–0.08 s while the real one reached 0.25 s. Without class 400 the
+10-minute p95 of the 7 days to 2026-09-30 had a median of 0.09 s, 99% of
+windows under 0.63 s, and no stretch over 3 s longer than 5 minutes (the
+alert needs 15).
+
+**Bounds on the value.** Keep it under 2.5 s, a bucket bound of that
+histogram: held answers then land in (1, 2.5] and cannot by themselves push
+even an unfiltered p95 past 2.5 s, so not past the alert's 3 s. Keep it under
+hls.js's 10 s time to first byte as well: past that the 404 becomes a
+timeout, and hls.js retries timeouts.
+
+**Seen as** `transcoder_unknown_session_requests_total{answer}`: `delayed`,
+`canceled` (the client left during the wait), and `immediate`. There is also
+one info line per session id per 10 min, `session: unknown session, 404 held
+(tarpit)`. Its `held` field is the number of requests held for that id since
+its last line, so `held / 600` is the tab's request rate. The ids remembered
+for this are capped at 4096, each cut to 64 bytes.
+
 ### Close (DELETE /session/{id})
 
 1. Release the run
@@ -754,6 +837,8 @@ The player tracks `seekOffset` — the quantized seek position. Displayed time =
 | `sessionInactivityExpiry` | 10min | session_manager.go | Remove session after inactivity |
 | `runGracePeriod` | 30s | run_manager.go | Keep idle run alive for reuse |
 | `runGracefulStopTimeout` | 2s | transcode_run.go | SIGTERM → SIGKILL timeout |
+| `defaultUnknownSessionDelay` | 2s | unknown_session.go | Hold of a playlist/segment 404 for a session this pod does not hold (`UNKNOWN_SESSION_DELAY`) |
+| `unknownSessionLogEvery` | 10min | unknown_session.go | One tarpit log line per unknown session id per period |
 
 ## Metrics
 
@@ -775,6 +860,7 @@ the prom port (8083, `--use-prom`, `httpprom` in the chart). Namespace
 | `video_route_total{route,reason}` | POST /session answers by route (`passthrough`, `copy`, `reencode`, `audio`; `refused` for the 415 of a video the route would have to encode or the 503 of a failed check, `error` for any other failure — nothing playable among them) and reason (every reason is registered on `reencode` and `refused` from the start; `no_hevc_declared` since the audio tokens) |
 | `run_real_start_total{mode,result}` | Probes of where a copy or passthrough seek run really starts: `ok`, `failed` (error, timeout), `implausible` (before the file, over 60 s before the seek, or after it: over 60 s on the copy route, at all on passthrough). Not `ok`: the run reports the quantized seek |
 | `source_probe_seconds{result}` | The passthrough source probe, retries included, `ok`/`failed`; cached results excluded |
+| `unknown_session_requests_total{answer}` | Requests for a session this pod does not hold: `delayed` (playlist/segment GET/HEAD answered 404 after `UNKNOWN_SESSION_DELAY`), `canceled` (the client left during the wait), `immediate` (anything else, or the delay off). See [Unknown session](#unknown-session-the-404-is-held) |
 | `session_segments_served{route}` | Primary segments served to a session, observed when it is removed (sessions that never started a run are not observed) |
 | `passthrough_codecs_mismatch_total{field}` | Passthrough masters whose output hvcC differs from what the route was decided on — the source's parameter sets as `outputHVCC` merges them (`profile`, `tier`, `level`) — or whose init gave no CODECS (`unbuildable`, master refused). Expected 0 |
 
