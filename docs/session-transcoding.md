@@ -194,6 +194,28 @@ the client only declares what it decodes.
   playlist names it (waiting up to 10 s, then 404), an earlier process's
   if it has bytes (else 404 at once). Its `ETag` is the generation in its
   name and its size.
+- **Unique presentation times** (`services/pts_unique.go`, since
+  2026-09-30). A video segment (`v*.m4s`) goes out with no two of its
+  samples at one presentation time: a later sample (in decode order) at the
+  time of an earlier one gets the next free tick, written over its trun's
+  composition offset. FFmpeg copies such pairs from the source (a CRA and a
+  RASL_N after it at the CRA's time; 2 of 10 live runs checked), and Chrome
+  takes the fragment without an error and buffers none of it: hls.js loads
+  it again and again, the viewer sits on a frozen picture, the transcoder
+  answers 304s (up to 33k requests one session). The same fragment with the
+  duplicate one tick later is taken whole (Chrome 154, MSE bench; the
+  production heads in `testdata/passthrough/pts` come out byte for byte as
+  the bench's). A duplicate is not always dropped -- another file's with the
+  same pattern was taken -- but it is never needed. Only the moof is read
+  (~3 KB); the bytes are patched on the way out (`patchedReaderAt`), the file
+  stays as FFmpeg wrote it, the size stays, so `sidx`, data offsets and a
+  `Range` stay right. A segment with samples moved has its own `ETag`
+  (`-pts1` after the size): a copy a browser took before does not
+  validate. Counted once per file and process as
+  `transcoder_passthrough_segment_pts_total{result=fixed|clean|unreadable}`
+  (`unreadable`: a moof not read, served as written); the first moved
+  segment of a run is logged. Not handled: a duplicate across two segments;
+  audio segments (every sample a sync sample, no offsets).
 - **Cleanup.** Init files of earlier processes stay in the run directory
   (a few KB each, at most one per restart) and go with it when the run is
   cleaned up.

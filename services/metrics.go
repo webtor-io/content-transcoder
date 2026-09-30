@@ -228,6 +228,11 @@ var (
 		Help:      "Time to probe a source (its first read; cached probe results are not counted), by outcome.",
 		Buckets:   secondsBuckets,
 	}, []string{"outcome"})
+	metricPassthroughSegmentPTS = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsNamespace,
+		Name:      "passthrough_segment_pts_total",
+		Help:      "Passthrough video segments served, once per file and process, by whether samples of theirs shared a presentation time and were moved one tick apart (fixed: Chrome buffers nothing of such a fragment), none did (clean), or their moof could not be read (unreadable: served as written). See pts_unique.go.",
+	}, []string{"result"})
 	metricVideoRouteTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricsNamespace,
 		Name:      "video_route_total",
@@ -310,6 +315,9 @@ func init() {
 	}
 	for _, f := range []string{codecsMismatchProfile, codecsMismatchTier, codecsMismatchLevel, codecsMismatchUnbuildable} {
 		metricPassthroughCodecsMismatch.WithLabelValues(f)
+	}
+	for _, r := range []string{ptsResultFixed, ptsResultClean, ptsResultUnreadable} {
+		metricPassthroughSegmentPTS.WithLabelValues(r)
 	}
 	// The route series a dashboard compares from the first scrape: every
 	// reason on the two routes it can end in, the reasons a copy or audio

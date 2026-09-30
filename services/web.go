@@ -1003,14 +1003,22 @@ func (s *Web) serveSegment(w http.ResponseWriter, r *http.Request, sess *Session
 		return
 	}
 	sess.notePrimaryServed(filename)
-	w.Header().Set("ETag", segmentETag(generation, fi.Size()))
+	// A passthrough video segment goes out with its samples' presentation
+	// times made unique (pts_unique.go), under an ETag of its own where any
+	// moved.
+	var content io.ReaderAt = f
+	etag := segmentETag(generation, fi.Size())
+	if isPassthroughVideoSegment(filename) {
+		content, etag = uniquePTSSegment(f, fi.Size(), path, generation)
+	}
+	w.Header().Set("ETag", etag)
 	if strings.HasSuffix(filename, "."+passthroughSegmentExt) {
 		// Go's table has no .m4s, the image has no /etc/mime.types, and
 		// sniffing an fMP4 segment (styp) finds nothing.
 		w.Header().Set("Content-Type", "video/mp4")
 	}
 	// Exactly the bytes the ETag names: FFmpeg may still be appending.
-	http.ServeContent(w, r, filename, time.Time{}, io.NewSectionReader(f, 0, fi.Size()))
+	http.ServeContent(w, r, filename, time.Time{}, io.NewSectionReader(content, 0, fi.Size()))
 }
 
 // segmentETag is the strong validator of a segment response: the generation
