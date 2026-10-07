@@ -1,9 +1,13 @@
 package services
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -64,5 +68,57 @@ func TestWebCloseDrainsBeforeClosingSessions(t *testing.T) {
 	sm.mu.Unlock()
 	if !closed {
 		t.Error("Close must close the sessions after the drain")
+	}
+}
+
+// A response still going out at the drain timeout (a segment to a reader
+// that stopped) is cut with a reset, not a FIN queued behind the unsent tail
+// of the send buffer: in a pod that tail and the FIN die with the network,
+// and torrent-http-proxy waits for its keepalive to notice. The reset comes
+// from common-services and needs the listener's connections to be plain
+// *net.TCPConn: a Listen that wraps them turns it back into a FIN.
+func TestWebCloseResetsResponsesCutAtTimeout(t *testing.T) {
+	runMgr := NewRunManager()
+	defer runMgr.CloseAll()
+	web := &Web{host: "127.0.0.1", port: 0, sessionManager: NewSessionManager(runMgr), gs: cs.NewGracefulServer(200 * time.Millisecond)}
+
+	var written atomic.Int64
+	web.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 32<<10)
+		for {
+			if _, err := w.Write(buf); err != nil {
+				return
+			}
+			written.Add(int64(len(buf)))
+		}
+	})
+	if err := web.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = web.Serve() }()
+
+	c, err := net.Dial("tcp", web.ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.(*net.TCPConn).SetReadBuffer(16 << 10)
+	if _, err := fmt.Fprint(c, "GET /session/x/v0-0.ts HTTP/1.1\r\nHost: t\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for the handler's writes to block on full socket buffers.
+	for last := int64(-1); ; time.Sleep(50 * time.Millisecond) {
+		cur := written.Load()
+		if cur > 0 && cur == last {
+			break
+		}
+		last = cur
+	}
+
+	web.Close()
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := io.Copy(io.Discard, c)
+	if !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("client read %d of %d bytes and then %v, want a connection reset", n, written.Load(), err)
 	}
 }
