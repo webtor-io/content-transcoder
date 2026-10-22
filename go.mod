@@ -1,25 +1,21 @@
 module github.com/webtor-io/content-transcoder
 
 require (
-	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/pkg/errors v0.9.1
+	github.com/prometheus/client_golang v1.23.2
 	github.com/sirupsen/logrus v1.9.3
+	github.com/swaggo/http-swagger/v2 v2.0.2
+	github.com/swaggo/swag v1.16.6
 	github.com/urfave/cli v1.22.17
 	github.com/webtor-io/common-services v0.0.0-20261007162356-7960c21dad8f
 	github.com/webtor-io/content-prober v0.0.0-20220416113613-facff27ad415
-	golang.org/x/sys v0.47.0 // indirect
+	github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4
 	google.golang.org/grpc v1.83.2
 )
 
 require (
-	github.com/prometheus/client_golang v1.23.2
-	github.com/swaggo/http-swagger/v2 v2.0.2
-	github.com/swaggo/swag v1.16.6
-	github.com/webtor-io/lazymap v0.0.0-20260807153732-a258d93d42f4
-)
-
-require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
@@ -58,6 +54,7 @@ require (
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
@@ -66,4 +63,4 @@ require (
 	mellium.im/sasl v0.3.2 // indirect
 )
 
-go 1.26
+go 1.27
