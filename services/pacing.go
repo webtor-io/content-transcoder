@@ -81,17 +81,49 @@ func (r *TranscodeRun) primarySegmentPath(n int) string {
 // firstMissingSegment is the lowest primary segment at or after the
 // furthest viewer demand that FFmpeg has not started (segment files appear
 // when FFmpeg opens them).
-func (r *TranscodeRun) firstMissingSegment() int {
+func (r *TranscodeRun) firstMissingSegment(stale map[int]time.Time) int {
 	r.mu.Lock()
 	n := r.demand
 	r.mu.Unlock()
 	if n < 0 {
 		n = 0
 	}
-	for fileExists(r.primarySegmentPath(n)) {
+	for r.segmentStarted(n, stale) {
 		n++
 	}
 	return n
+}
+
+// staleSegments lists the primary segments already in the run dir, with
+// their mtimes, when a process starts. A restart reuses the dir and starts
+// again from segment 0, so the previous process's files are not the new
+// one's progress: counted as such they froze it at once (nobody was a lead
+// behind them yet) and made its next resume wait for the whole rewrite,
+// counted in run_resume_stalls_total. Taken by watchProcessGenLocked right
+// after the start, before FFmpeg has its source open.
+func (r *TranscodeRun) staleSegments() map[int]time.Time {
+	stale := map[int]time.Time{}
+	for n := 0; ; n++ {
+		fi, err := os.Stat(r.primarySegmentPath(n))
+		if err != nil {
+			return stale
+		}
+		stale[n] = fi.ModTime()
+	}
+}
+
+// segmentStarted reports whether the running process has opened primary
+// segment n: the file is there and is not the one a previous process left
+// (FFmpeg truncates a segment it rewrites, which moves its mtime). Compared
+// with the old mtime rather than with the start time: Linux stamps files
+// from a coarse clock that can read a few ms behind time.Now.
+func (r *TranscodeRun) segmentStarted(n int, stale map[int]time.Time) bool {
+	fi, err := os.Stat(r.primarySegmentPath(n))
+	if err != nil {
+		return false
+	}
+	old, ok := stale[n]
+	return !ok || !fi.ModTime().Equal(old)
 }
 
 func fileExists(path string) bool {
@@ -101,7 +133,7 @@ func fileExists(path string) bool {
 
 // pace runs for one FFmpeg process (started by watchProcessLocked) and
 // freezes and releases it against the viewers' demand until done closes.
-func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, mode string, tm paceTiming) {
+func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, mode string, tm paceTiming, stale map[int]time.Time) {
 	leadSegs := paceSegments(lead)
 	resumeSegs := paceSegments(lead - tm.resumeGap)
 	if resumeSegs < 1 {
@@ -127,7 +159,7 @@ func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, m
 		if !on {
 			// Found while FFmpeg is still frozen, so the segment it starts
 			// right after SIGCONT is the one timed.
-			next = r.firstMissingSegment()
+			next = r.firstMissingSegment(stale)
 		}
 		if err := syscall.Kill(-pid, sig); err != nil {
 			return
@@ -181,7 +213,7 @@ func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, m
 		if waitSeg >= 0 {
 			since := time.Since(resumedAt)
 			switch {
-			case fileExists(r.primarySegmentPath(waitSeg)):
+			case r.segmentStarted(waitSeg, stale):
 				metricRunResumeSegmentSeconds.WithLabelValues(mode).Observe(since.Seconds())
 				waitSeg = -1
 			case !stallCounted && since >= tm.resumeStall:
@@ -195,9 +227,9 @@ func (r *TranscodeRun) pace(pid int, lead time.Duration, done <-chan struct{}, m
 			}
 		}
 		switch {
-		case !paused && fileExists(r.primarySegmentPath(demand+leadSegs)):
+		case !paused && r.segmentStarted(demand+leadSegs, stale):
 			pause(true)
-		case paused && !fileExists(r.primarySegmentPath(demand+resumeSegs)):
+		case paused && !r.segmentStarted(demand+resumeSegs, stale):
 			pause(false)
 		}
 	}
