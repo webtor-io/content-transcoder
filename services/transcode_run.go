@@ -413,7 +413,7 @@ func (r *TranscodeRun) watchProcessGenLocked(gen string, closers ...io.Closer) {
 		if r.h.passthrough {
 			go r.paceMedia(r.cmd.Process.Pid, r.h.cfg.paceLead, r.done, tm)
 		} else {
-			go r.pace(r.cmd.Process.Pid, r.h.cfg.paceLead, r.done, r.runMode(), tm)
+			go r.pace(r.cmd.Process.Pid, r.h.cfg.paceLead, r.done, r.runMode(), tm, r.staleSegments())
 		}
 	}
 	if mode := r.runMode(); mode != "" {
