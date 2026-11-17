@@ -24,6 +24,31 @@ func TestRedactSecrets(t *testing.T) {
 	}
 }
 
+// Every refusal of a copied AAC's AudioSpecificConfig by FFmpeg 8.1.3's ADTS
+// muxer (adtsenc.c, adts_decode_extradata) is cured by encoding; the
+// failures an encode does not cure are not taken for one.
+func TestADTSConfigRefused(t *testing.T) {
+	for _, tc := range []struct {
+		tail string
+		want bool
+	}{
+		{"[adts @ 0x1] MPEG-4 AOT 42 is not allowed in ADTS", true},
+		{"[adts @ 0x1] MPEG-4 AOT 23 is not allowed in ADTS", true},
+		{"[adts @ 0x1] Escape sample rate index illegal in ADTS", true},
+		{"[adts @ 0x1] 960/120 MDCT window is not allowed in ADTS", true},
+		{"[adts @ 0x1] Scalable configurations are not allowed in ADTS", true},
+		{"[adts @ 0x1] Extension flag is not allowed in ADTS", true},
+		{"[mpegts @ 0x1] Too long service or provider name\n[out#0/segment @ 0x1] Could not write header (incorrect codec parameters ?): Out of memory", false},
+		{"[aost#1:0/copy @ 0x1] Error submitting a packet to the muxer: Invalid data found when processing input", false},
+		{"[in#0/mov,mp4,m4a,3gp,3g2,mj2 @ 0x1] Error during demuxing: Connection reset by peer", false},
+		{"[aac @ 0x1] Error submitting packet to decoder: Invalid data found when processing input", false},
+	} {
+		if got := adtsConfigRefused(tc.tail); got != tc.want {
+			t.Errorf("adtsConfigRefused(%q) = %v, want %v", tc.tail, got, tc.want)
+		}
+	}
+}
+
 // FFmpeg rewrites its progress line in place with \r, so a failed run's
 // stderr is one huge "line" of stats followed by the actual error. The
 // tail has to split on \r too, or the error drowns in progress output.

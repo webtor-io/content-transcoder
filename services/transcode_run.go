@@ -96,7 +96,7 @@ type TranscodeRun struct {
 	generation string
 
 	// fallbacks are the ParamOptions this source turned out to need: set
-	// when a run died on a failure they cure (adtsScalableError,
+	// when a run died on a failure they cure (adtsConfigRefused,
 	// timestampsFailure, copiedAudioMuxFailure), and preset by the run
 	// manager for every later run of the same source. Guarded by mu.
 	fallbacks ParamOptions
@@ -556,7 +556,7 @@ func (r *TranscodeRun) reapProcess(closers ...io.Closer) {
 		// later runs of the source.
 		r.mu.Lock()
 		before := r.fallbacks
-		if strings.Contains(tail, adtsScalableError) {
+		if adtsConfigRefused(tail) {
 			r.fallbacks.EncodeAudio = true
 		}
 		// A copy only the client's declaration made that a muxer refuses

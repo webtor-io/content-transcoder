@@ -89,42 +89,51 @@ func TestGetFFmpegParamsEncodeAudio(t *testing.T) {
 }
 
 // A copied AAC the mpegts muxer cannot wrap failed every run of the source
-// (m4b audiobooks). After the first such failure the run encodes the audio,
-// and the manager remembers it for the source's other runs (seeks).
+// (m4b audiobooks: a scalable configuration; USAC, AOT 42, 6 failed starts
+// of one session). After the first such failure the run encodes the audio,
+// -xerror kept, and the manager remembers it for the source's other runs
+// (seeks).
 func TestADTSFailureSwitchesToEncodedAudio(t *testing.T) {
-	dir := t.TempDir()
-	m := NewRunManager()
-	defer m.CloseAll()
-	h := testHLS(testStream(0, "audio", "aac"))
-	m.mu.Lock()
-	r := m.newRunLocked(runKey(dir, 0), dir, 0, "http://src/book.m4b", h)
-	m.mu.Unlock()
-	if err := os.MkdirAll(r.outputDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	stderr := "[adts @ 0x7fe7e07c90c0] Scalable configurations are not allowed in ADTS\n[out#0/segment @ 0x1] Could not write header (incorrect codec parameters ?): Invalid data found when processing input\nConversion failed!\n"
-	if err := os.WriteFile(filepath.Join(r.outputDir, "ffmpeg.err"), []byte(stderr), 0644); err != nil {
-		t.Fatal(err)
-	}
-	startFakeProcess(t, r, "false")
-	<-r.done
-	r.mu.Lock()
-	got := r.fallbacks.EncodeAudio
-	r.mu.Unlock()
-	if !got {
-		t.Fatal("the run must encode the audio after an ADTS failure")
-	}
-	m.mu.Lock()
-	seek := m.newRunLocked(runKey(dir, 600), dir, 600, "http://src/book.m4b", h)
-	m.mu.Unlock()
-	if !seek.fallbacks.EncodeAudio {
-		t.Error("a later run of the same source must start with encoded audio")
-	}
-	m.mu.Lock()
-	other := m.newRunLocked(runKey(t.TempDir(), 0), t.TempDir(), 0, "http://src/other.m4b", h)
-	m.mu.Unlock()
-	if other.fallbacks.EncodeAudio {
-		t.Error("another source must keep copying")
+	for name, refusal := range map[string]string{
+		"scalable": "[adts @ 0x7fe7e07c90c0] Scalable configurations are not allowed in ADTS",
+		"usac":     "[adts @ 0x7ff64d7c83c0] MPEG-4 AOT 42 is not allowed in ADTS",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			m := NewRunManager()
+			defer m.CloseAll()
+			h := testHLS(testStream(0, "audio", "aac"))
+			m.mu.Lock()
+			r := m.newRunLocked(runKey(dir, 0), dir, 0, "http://src/book.m4b", h)
+			m.mu.Unlock()
+			if err := os.MkdirAll(r.outputDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			stderr := refusal + "\n[out#0/segment @ 0x1] Could not write header (incorrect codec parameters ?): Invalid data found when processing input\nConversion failed!\n"
+			if err := os.WriteFile(filepath.Join(r.outputDir, "ffmpeg.err"), []byte(stderr), 0644); err != nil {
+				t.Fatal(err)
+			}
+			startFakeProcess(t, r, "false")
+			<-r.done
+			r.mu.Lock()
+			got := r.fallbacks
+			r.mu.Unlock()
+			if got != (ParamOptions{EncodeAudio: true}) {
+				t.Fatalf("fallbacks %+v after an ADTS failure, want the audio encoded and nothing else", got)
+			}
+			m.mu.Lock()
+			seek := m.newRunLocked(runKey(dir, 600), dir, 600, "http://src/book.m4b", h)
+			m.mu.Unlock()
+			if !seek.fallbacks.EncodeAudio {
+				t.Error("a later run of the same source must start with encoded audio")
+			}
+			m.mu.Lock()
+			other := m.newRunLocked(runKey(t.TempDir(), 0), t.TempDir(), 0, "http://src/other.m4b", h)
+			m.mu.Unlock()
+			if other.fallbacks.EncodeAudio {
+				t.Error("another source must keep copying")
+			}
+		})
 	}
 }
 
