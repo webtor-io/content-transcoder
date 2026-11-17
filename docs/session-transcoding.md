@@ -728,6 +728,7 @@ ffmpeg -ss {time} -i {url} ... -c:v h264 -preset veryfast ... -ss 0 -map 0:{copi
 - Per-source fallbacks (`ParamOptions`, remembered by the RunManager per source). When a run dies on a failure a known option cures, that source's later runs get the option:
   - timestamps (`Non-monotonic DTS` / `Invalid DTS` under `-xerror`) → `Lenient`, which drops `-xerror`;
   - the ADTS muxer refusing a copied AAC's configuration (`… is not allowed in ADTS`: scalable, an object type above 4 such as USAC / xHE-AAC, AOT 42; `Escape sample rate index illegal in ADTS`) → `EncodeAudio`, which re-encodes AAC the probe would copy (content-prober reports no profile or object type, so it cannot be known before the first start);
+    - **Known gap: passthrough.** A passthrough session copies AAC ≤ 2 ch into fMP4 too (`audioOutputFor`), so USAC / xHE-AAC goes to movenc, not ADTS: nothing refuses it (FFmpeg 8.1.2, the AOT 42 FATE vector copied into fMP4 HLS under `-xerror`: exit 0, init profile 41), the fallback never fires, and the master says `CODECS="mp4a.40.2"` for an AOT 42 stream. Whether a browser plays that is unverified. Deciding it needs the object type at probe time, which content-prober's `Stream` does not carry.
   - a muxer refusing a packet of a copied audio output (`[aost#…/copy @ …] Error submitting a packet to the muxer`), only when the session copies audio because the client declared it (`copiesDeclaredAudio`) → `EncodeAudio` and `Lenient`, on seek runs too (see [Audio](#audio-multichannel-aac-and-dolby), Fallback).
 
 ### Passthrough Mode (HEVC → fMP4)
