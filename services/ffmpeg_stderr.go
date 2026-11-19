@@ -8,10 +8,25 @@ import (
 	"strings"
 )
 
-// adtsScalableError is FFmpeg refusing to wrap a copied AAC stream in the
-// ADTS headers mpegts needs: the stream's AudioSpecificConfig says it depends
-// on a core coder. Seen on m4b audiobooks, which failed on every run.
-const adtsScalableError = "Scalable configurations are not allowed in ADTS"
+// adtsConfigPattern matches FFmpeg refusing to wrap a copied AAC stream in
+// the ADTS headers mpegts needs: every refusal of the stream's
+// AudioSpecificConfig in FFmpeg 8.1.3's libavformat/adtsenc.c
+// (adts_decode_extradata) -- "MPEG-4 AOT %d is not allowed in ADTS" (any
+// object type above 4: ADTS has 2 bits for it), "Escape sample rate index
+// illegal in ADTS", and "960/120 MDCT window", "Scalable configurations",
+// "Extension flag" "is not allowed in ADTS". The header is refused before a
+// packet is written, so every restart of the copy dies the same way, and
+// only an encode cures it. Seen: scalable on m4b audiobooks, AOT 42
+// (USAC / xHE-AAC) in an MP4-family file, 6 failed starts of one session on
+// 2026-11-13. Not decided before the first start: content-prober has no
+// profile or object type (ffprobe's profile "xHE-AAC", "41" with -bitexact).
+var adtsConfigPattern = regexp.MustCompile(`(?:not allowed|illegal) in ADTS`)
+
+// adtsConfigRefused reports a run that died on the ADTS muxer refusing a
+// copied AAC stream's configuration (adtsConfigPattern).
+func adtsConfigRefused(tail string) bool {
+	return adtsConfigPattern.MatchString(tail)
+}
 
 // timestampsFailure reports a run -xerror killed over timestamps FFmpeg
 // would otherwise repair: "Non-monotonic DTS ... Error submitting a packet"

@@ -183,7 +183,7 @@ type HLS struct {
 // ParamOptions adjust a run's FFmpeg arguments beyond what the probe says.
 type ParamOptions struct {
 	// EncodeAudio encodes AAC audio the probe says can be copied. Set after
-	// a copy failed on it (see adtsScalableError): some AAC streams carry a
+	// a copy failed on it (see adtsConfigPattern): some AAC streams carry a
 	// configuration the mpegts muxer's ADTS headers cannot express.
 	EncodeAudio bool
 	// Lenient drops -xerror. It makes FFmpeg's routine timestamp repairs
