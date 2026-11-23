@@ -514,9 +514,8 @@
     "av1-2160": {
       "post_status": 415,
       "post_body": "resolution over 1080p is not supported\n",
-      "legacy_status": 200,
-      "legacy_body": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"session/\u003cSID\u003e/a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=8000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nsession/\u003cSID\u003e/v0-2160.m3u8?api-key=K\u0026token=T\n",
-      "legacy_error": "failed to get ffmpeg params: resolution over 1080p is not supported"
+      "legacy_status": 415,
+      "legacy_body": "resolution over 1080p is not supported\n"
     },
     "h264-1080-aac": {
       "post_status": 200,
@@ -1258,9 +1257,8 @@
     "hevc-2160-hdr": {
       "post_status": 415,
       "post_body": "resolution over 1080p is not supported\n",
-      "legacy_status": 200,
-      "legacy_body": "#EXTM3U\n#EXT-X-SESSION-OFFSET:0.000\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"eng\",NAME=\"Track #1\",AUTOSELECT=YES,DEFAULT=YES,URI=\"session/\u003cSID\u003e/a0.m3u8?api-key=K\u0026token=T\"\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=8000000,CODECS=\"avc1.42e00a,mp4a.40.2\",AUDIO=\"audio\"\nsession/\u003cSID\u003e/v0-2160.m3u8?api-key=K\u0026token=T\n",
-      "legacy_error": "failed to get ffmpeg params: resolution over 1080p is not supported"
+      "legacy_status": 415,
+      "legacy_body": "resolution over 1080p is not supported\n"
     },
     "hevc-2560x1080": {
       "post_status": 200,

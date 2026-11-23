@@ -12,8 +12,13 @@ package services
 // regenerate the record.
 //
 // Deliberate departures from 1b25e28, spliced into the record by hand
-// (only these seek_args entries; every other byte is still 1b25e28's).
-// A record regenerated on 1b25e28 has to get them again:
+// (only these seek_args and legacy entries; every other byte is still
+// 1b25e28's). A record regenerated on 1b25e28 has to get them again:
+//   - the legacy GET /index.m3u8 of a video the old route will not encode
+//     answers POST's 415 and opens no session: legacy_status 415,
+//     legacy_body "resolution over 1080p is not supported\n", no
+//     legacy_error (av1-2160, hevc-2160-hdr). 1b25e28 answered 200 with a
+//     master whose variants could never start;
 //   - a seek run of a re-encoded video cuts each copied audio track at the
 //     seek point: "-ss", "0" before its "-map" (hevc-1080-main10-aac,
 //     hevc-2560x1080, hevc-cover-art-first: 0:1 or 0:2, their only track;

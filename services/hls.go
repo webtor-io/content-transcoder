@@ -204,6 +204,33 @@ func (h *HLS) GetFFmpegParamsWith(out string, opts ParamOptions) ([]string, erro
 	return h.ffmpegParamsFor(out, opts, "")
 }
 
+// contentError is the content-level refusal of the session's source (one of
+// the errors above), nil when a run may start. It depends on the source and
+// the configuration only, so the legacy route asks it before answering a
+// master it starts no run for (openSessionWith), and every run's command
+// asks it again (ffmpegParamsFor).
+func (h *HLS) contentError() error {
+	if len(h.primary) == 0 {
+		return ErrNoPlayableStreams
+	}
+	// Passthrough copies the video: the gate below, which stands for "this
+	// video would have to be encoded", has nothing to say about it.
+	if h.passthrough {
+		return nil
+	}
+	if h.primary[0].s.GetCodecType() == "video" {
+		if h.primary[0].s.GetCodecName() != "h264" {
+			if h.cfg.disableVideoTranscoding {
+				return ErrTranscodingDisabled
+			}
+			if h.primary[0].s.GetHeight() > 1080 {
+				return ErrResolutionNotSupported
+			}
+		}
+	}
+	return nil
+}
+
 // ffmpegParamsFor is the command of the run process of generation gen: a
 // passthrough command names its files after it (buildPassthroughParams);
 // the old route's does not use it.
@@ -213,23 +240,11 @@ func (h *HLS) ffmpegParamsFor(out string, opts ParamOptions, gen string) ([]stri
 	if err != nil {
 		return nil, errors.Wrap(err, "Unable to parse url")
 	}
-	if len(h.primary) == 0 {
-		return nil, ErrNoPlayableStreams
+	if err := h.contentError(); err != nil {
+		return nil, err
 	}
-	// Passthrough copies the video: the gate below, which stands for "this
-	// video would have to be encoded", has nothing to say about it.
 	if h.passthrough {
 		return buildPassthroughParams(h, parsedURL, out, opts, gen)
-	}
-	if h.primary[0].s.GetCodecType() == "video" {
-		if h.primary[0].s.GetCodecName() != "h264" {
-			if h.cfg.disableVideoTranscoding {
-				return nil, ErrTranscodingDisabled
-			}
-			if h.primary[0].s.GetHeight() > 1080 {
-				return nil, ErrResolutionNotSupported
-			}
-		}
 	}
 	params := []string{}
 	// Thread pools sized to the CPU the container may use (see
