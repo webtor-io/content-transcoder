@@ -395,6 +395,18 @@ func (s *Web) openSessionWith(sourceURL string, start bool, decl viewerDeclarati
 		log.WithField("sourceURL", redactSecrets(sourceURL)).Info("session: no video or audio stream")
 		return nil, route, http.StatusUnsupportedMediaType, ErrNoPlayableStreams.Error()
 	}
+	// The same for a video the old route will not encode (over 1080p, or
+	// encoding disabled), on the legacy route only: its master advertised
+	// variants whose first request got the refusal from EnsureRunning and
+	// then waited for a playlist that never comes (504, not_running), and
+	// clients retried that dozens of times. It gets POST's 415 instead.
+	// POST keeps reaching the refusal through Start, as it always did.
+	if !start {
+		if err := hls.contentError(); err != nil {
+			log.WithError(err).WithField("sourceURL", redactSecrets(sourceURL)).Info("session: legacy open refused")
+			return nil, route, http.StatusUnsupportedMediaType, unsupportedContentReason(err)
+		}
+	}
 
 	// Create session
 	sess := s.sessionManager.Create(SessionConfig{
@@ -840,6 +852,14 @@ func (s *Web) sessionPlaylistHandler(w http.ResponseWriter, r *http.Request, ses
 						}).Warn("session: restart limit reached")
 					})
 					http.Error(w, "transcoder restart limit reached", http.StatusServiceUnavailable)
+					return
+				}
+				// A refusal of the content is final: no playlist will come,
+				// and waiting for one turned it into a 504 the client
+				// retried. Opening refuses such a source already; this
+				// answers any session that reaches it anyway.
+				if reason := unsupportedContentReason(err); reason != "" {
+					http.Error(w, reason, http.StatusUnsupportedMediaType)
 					return
 				}
 				log.WithError(err).WithField("sessionID", sess.id).Error("session: failed to restart for playlist")

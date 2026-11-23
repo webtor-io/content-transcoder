@@ -346,3 +346,63 @@ func TestLegacyPlaylist_DoneProbeStays404(t *testing.T) {
 		t.Errorf("done=true probe: status = %d, want 404", w.Code)
 	}
 }
+
+// A video the old route will not encode is refused at the legacy master
+// with POST's 415, before a session exists. It used to get a 200 master
+// whose every variant request got the refusal from EnsureRunning, waited
+// for a playlist that never comes and answered 504 (playlist_waits_total
+// not_running); clients retried that dozens of times a session.
+func TestLegacyPlaylist_UnsupportedRefusedAtMaster(t *testing.T) {
+	noSourceProbe(t)
+	for _, c := range []struct {
+		name     string
+		height   int32
+		disabled bool
+		want     error
+	}{
+		{"over 1080p", 2160, false, ErrResolutionNotSupported},
+		{"encoding disabled", 1080, true, ErrTranscodingDisabled},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			web, sm := passthroughWeb(t, c.height*16/9, c.height, nil)
+			web.hlsBuilder.disableVideoTranscoding = c.disabled
+			created := counter(t, metricSessionsTotal)
+			for i := 0; i < 3; i++ { // the client's retries
+				r := httptest.NewRequest(http.MethodGet, "/index.m3u8?api-key=K", nil)
+				r.Header.Set("X-Source-Url", "http://source/hevc/file.mkv")
+				w := httptest.NewRecorder()
+				web.handler.ServeHTTP(w, r)
+				if w.Code != http.StatusUnsupportedMediaType || w.Body.String() != c.want.Error()+"\n" {
+					t.Fatalf("legacy master: %d %q, want 415 %q", w.Code, w.Body.String(), c.want)
+				}
+			}
+			if got := counter(t, metricSessionsTotal) - created; got != 0 || len(sm.sessions) != 0 || len(sm.runMgr.runs) != 0 {
+				t.Errorf("refused source: %v sessions created, %d open, %d runs", got, len(sm.sessions), len(sm.runMgr.runs))
+			}
+		})
+	}
+}
+
+// A session whose run is refused that way answers its playlists with the
+// 415 at once, not after a wait for a playlist no run will write.
+func TestSessionPlaylist_UnsupportedRefusalIs415(t *testing.T) {
+	noSourceProbe(t)
+	web, sm := passthroughWeb(t, 3840, 2160, nil)
+	sess := sm.Create(SessionConfig{SourceURL: "http://source/hevc/file.mkv", HashDir: t.TempDir(), HLS: hevcHLS(t, 3840, 2160, false, nil)})
+	name := sess.h.primary[0].GetPlaylistName()
+	notRunning := counter(t, metricPlaylistWaitsTotal.WithLabelValues(playlistWaitNotRunning, playlistKindVariant))
+	for i := 0; i < 3; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/session/"+sess.id+"/"+name, nil)
+		w := httptest.NewRecorder()
+		web.handler.ServeHTTP(w, r)
+		if w.Code != http.StatusUnsupportedMediaType || w.Body.String() != ErrResolutionNotSupported.Error()+"\n" {
+			t.Fatalf("%s: %d %q, want 415 %q", name, w.Code, w.Body.String(), ErrResolutionNotSupported)
+		}
+	}
+	if got := counter(t, metricPlaylistWaitsTotal.WithLabelValues(playlistWaitNotRunning, playlistKindVariant)) - notRunning; got != 0 {
+		t.Errorf("playlist_waits_total{not_running,variant} +%v, want 0", got)
+	}
+	if sess.run != nil || sess.restartFails != 0 {
+		t.Errorf("run %v, restartFails %d: nothing may start or be charged", sess.run, sess.restartFails)
+	}
+}
