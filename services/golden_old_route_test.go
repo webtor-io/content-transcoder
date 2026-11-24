@@ -193,6 +193,9 @@ func fakeFFmpeg(t *testing.T) {
 
 var goldenSessionID = regexp.MustCompile(`\b[0-9a-f]{32}\b`)
 
+// goldenRunDir is the random part of a run directory's name (newTranscodeRun).
+var goldenRunDir = regexp.MustCompile(`(seek-[0-9]+\.[0-9]{3})-[0-9a-f]{16}\b`)
+
 // goldenWeb is a Web over a temporary output dir with content-prober's
 // answers preset for every golden source; configure adjusts it (the
 // passthrough configuration of the replays).
@@ -243,7 +246,7 @@ func goldenSourceURL(name string) string {
 func goldenRun(t *testing.T, web *Web, sm *SessionManager, out string, src goldenSource, decode string) goldenRecord {
 	t.Helper()
 	norm := func(s string) string {
-		s = strings.ReplaceAll(s, out, "<OUT>")
+		s = goldenRunDir.ReplaceAllString(strings.ReplaceAll(s, out, "<OUT>"), "$1")
 		return goldenSessionID.ReplaceAllString(s, "<SID>")
 	}
 	normArgs := func(args []string) []string {

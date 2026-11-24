@@ -79,10 +79,10 @@ func TestPassthroughRunIdentity(t *testing.T) {
 	if rOld == rPass {
 		t.Fatal("both routes got the same run")
 	}
-	if got, want := rOld.OutputDir(), filepath.Join(hashDir, "runs", "seek-600.000"); got != want {
+	if got, want := goldenRunDir.ReplaceAllString(rOld.OutputDir(), "$1"), filepath.Join(hashDir, "runs", "seek-600.000"); got != want {
 		t.Errorf("old route dir %s, want %s", got, want)
 	}
-	if got, want := rPass.OutputDir(), filepath.Join(hashDir, "runs", "hevc-seek-600.000"); got != want {
+	if got, want := goldenRunDir.ReplaceAllString(rPass.OutputDir(), "$1"), filepath.Join(hashDir, "runs", "hevc-seek-600.000"); got != want {
 		t.Errorf("passthrough dir %s, want %s", got, want)
 	}
 	if !strings.Contains(strings.Join(rPass.cmd.Args, " "), "-passthrough-stand-in") || strings.Contains(strings.Join(rOld.cmd.Args, " "), "-passthrough-stand-in") {
@@ -300,7 +300,7 @@ func TestSessionCreate_RouteInTheAnswer(t *testing.T) {
 			if c.route == videoRoutePassthrough {
 				wantDir = "hevc-seek-0.000"
 			}
-			if filepath.Base(sess.run.OutputDir()) != wantDir || sess.run.runMode() != c.route {
+			if goldenRunDir.ReplaceAllString(filepath.Base(sess.run.OutputDir()), "$1") != wantDir || sess.run.runMode() != c.route {
 				t.Errorf("run %s mode %s", sess.run.OutputDir(), sess.run.runMode())
 			}
 		})

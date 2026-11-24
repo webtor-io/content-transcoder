@@ -60,8 +60,7 @@ func runKey(hashDir string, seekTime float64) string {
 }
 
 // runKeyFor is the key of a run of h: runKey for the old route with the
-// audio it always had, unchanged so the old and the new pod of a rollout
-// keep sharing its runs, and "<hashDir>:<variant>:seek:<t>" for any other
+// audio it always had, and "<hashDir>:<variant>:seek:<t>" for any other
 // (HLS.runVariant: passthrough, a declaration that changes an audio output,
 // or both -- "hevc", "a6c", "hevc-a6c").
 func runKeyFor(hashDir string, h *HLS, seekTime float64) string {
@@ -184,9 +183,7 @@ func (m *RunManager) Acquire(hashDir string, seekTime float64, sourceURL string,
 	m.mu.Unlock()
 
 	if err := run.Start(); err != nil {
-		m.mu.Lock()
-		delete(m.runs, key)
-		m.mu.Unlock()
+		m.dropFailedStart(key, run)
 		return nil, err
 	}
 
@@ -194,6 +191,27 @@ func (m *RunManager) Acquire(hashDir string, seekTime float64, sourceURL string,
 		"runKey": key,
 	}).Info("runManager: created new run")
 	return run, nil
+}
+
+// dropFailedStart takes back the reference Acquire gave the new run under
+// key whose start failed, and retires the run with its directory: Start
+// makes the directory before the arguments that refuse a source (415, 503),
+// and every run has a directory of its own, so each refused request would
+// leave one. Unless a session of the key took the run meanwhile: it is then
+// that session's, released and reaped as any run -- cleaned up here, a run
+// that session went on to start would lose its process and files.
+func (m *RunManager) dropFailedStart(key string, run *TranscodeRun) {
+	run.Release()
+	m.mu.Lock()
+	mr, ok := m.runs[key]
+	retire := ok && mr.run == run && run.RefCount() <= 0
+	if retire {
+		delete(m.runs, key)
+	}
+	m.mu.Unlock()
+	if retire {
+		run.Cleanup()
+	}
 }
 
 // Release decrements the run's refCount. When it reaches 0, a grace period

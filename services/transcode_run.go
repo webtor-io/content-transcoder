@@ -55,7 +55,7 @@ type TranscodeRun struct {
 	// subtitles be cut there (startLocked).
 	realStartProbed bool
 	realStartOnce   sync.Once
-	outputDir string // {hashDir}/runs/[{variant}-]seek-{seekTime}/
+	outputDir string // {hashDir}/runs/[{variant}-]seek-{seekTime}-{random}/
 	sourceURL string
 	h         *HLS
 
@@ -139,11 +139,16 @@ type TranscodeRun struct {
 func newTranscodeRun(key, hashDir string, seekTime float64, sourceURL string, h *HLS) *TranscodeRun {
 	seekDir := fmt.Sprintf("seek-%.3f", seekTime)
 	if v := h.runVariant(); v != "" {
-		// A directory of its own: the old route's run at the same seek may
-		// be writing next to it, on this pod or another of the node.
+		// The variant in the name tells the routes' runs apart on disk.
 		seekDir = v + "-" + seekDir
 	}
-	outputDir := filepath.Join(hashDir, "runs", seekDir)
+	// The run's own directory, never another run's: hashDir is shared by
+	// the pods of a node, and cleanup removes the directory whole. Named by
+	// key alone, it was the directory of the same key's run on the other
+	// pod of a rollout, and of the run created here while a reaped one of
+	// the key was still being cleaned up -- the cleanup deleted the files
+	// that run was serving (504s through a rollout).
+	outputDir := filepath.Join(hashDir, "runs", seekDir+"-"+newRunGeneration())
 	runCtx, runCancel := context.WithCancel(context.Background())
 	return &TranscodeRun{
 		key:        key,
@@ -737,6 +742,7 @@ func (r *TranscodeRun) Generation() string {
 
 // newRunGeneration returns a name no other run process gets: not on this
 // pod, and not on another pod of the node, which shares the output dir.
+// It also makes each run's directory its own (newTranscodeRun).
 func newRunGeneration() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)

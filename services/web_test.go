@@ -220,11 +220,11 @@ func TestSessionSegmentHandler_RevalidatesCache(t *testing.T) {
 	defer runMgr.CloseAll()
 
 	sess := NewSession(SessionConfig{ID: "test-seg-cache", HashDir: dir, RunMgr: runMgr})
-	runDir := filepath.Join(dir, "runs", "seek-0.000")
+	run := newTranscodeRun("test:seek:0.000", dir, 0, "", nil)
+	runDir := run.OutputDir()
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	run := newTranscodeRun("test:seek:0.000", dir, 0, "", nil)
 	run.AddRef()
 	run.completed = true // segments already on disk, no FFmpeg needed
 	sess.run = run

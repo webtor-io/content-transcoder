@@ -199,12 +199,10 @@ func TestPlaylistForStream(t *testing.T) {
 		RunMgr:  runMgr,
 	})
 
-	// Simulate a run's output directory
-	runDir := filepath.Join(dir, "runs", "seek-0.000")
-	os.MkdirAll(runDir, 0755)
-
-	// Create a fake run to point at
+	// A fake run to point at, and its output directory
 	run := newTranscodeRun("test:seek:0.000", dir, 0, "", nil)
+	runDir := run.OutputDir()
+	os.MkdirAll(runDir, 0755)
 	run.AddRef()
 	s.run = run
 
@@ -240,9 +238,9 @@ func TestPlaylistForStream_SessionOffset(t *testing.T) {
 	s := NewSession(SessionConfig{ID: "test-offset", HashDir: dir, RunMgr: runMgr})
 	s.seekTime = 1500 // 25:00 movie-time
 
-	runDir := filepath.Join(dir, "runs", "seek-1500.000")
-	os.MkdirAll(runDir, 0755)
 	run := newTranscodeRun("test:seek:1500.000", dir, 1500, "", nil)
+	runDir := run.OutputDir()
+	os.MkdirAll(runDir, 0755)
 	run.AddRef()
 	s.run = run
 
@@ -270,9 +268,9 @@ func TestPlaylistForStream_AlreadyHasType(t *testing.T) {
 
 	s := NewSession(SessionConfig{ID: "test-playlist-type", HashDir: dir, RunMgr: runMgr})
 
-	runDir := filepath.Join(dir, "runs", "seek-0.000")
-	os.MkdirAll(runDir, 0755)
 	run := newTranscodeRun("test:seek:0.000", dir, 0, "", nil)
+	runDir := run.OutputDir()
+	os.MkdirAll(runDir, 0755)
 	run.AddRef()
 	s.run = run
 
