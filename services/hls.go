@@ -555,6 +555,12 @@ func (s *HLS) getRenditions(height uint) []Rendition {
 	return rs
 }
 
+// unknownAudioCodec reports an audio stream the probe could not name: FFmpeg
+// has no decoder for it ("no decoder found for: none").
+func unknownAudioCodec(s *cp.Stream) bool {
+	return s.GetCodecName() == "" || s.GetCodecName() == "none"
+}
+
 func NewHLS(in string, probe *cp.ProbeReply, cfg *HLSConfig) *HLS {
 	h := &HLS{
 		in:    in,
@@ -562,6 +568,19 @@ func NewHLS(in string, probe *cp.ProbeReply, cfg *HLSConfig) *HLS {
 		audio: []*HLSStream{},
 		subs:  []*HLSStream{},
 		cfg:   cfg,
+	}
+	// An audio track of a codec the probe could not name is left out when
+	// another track can be played: FFmpeg fails to open the outputs for it
+	// and takes the whole run down with it, every restart the same (phone
+	// MOVs with a 4-channel track next to the AAC one: 45 failed processes
+	// in 7 days). A source with only such audio keeps it -- it fails as it
+	// did, rather than playing as a silent video.
+	skipUnknownAudio := false
+	for _, s := range probe.GetStreams() {
+		if s.GetCodecType() == "audio" && !unknownAudioCodec(s) {
+			skipUnknownAudio = true
+			break
+		}
 	}
 	vi := 0
 	ai := 0
@@ -583,6 +602,9 @@ func NewHLS(in string, probe *cp.ProbeReply, cfg *HLSConfig) *HLS {
 			}
 			vi++
 		} else if s.GetCodecType() == "audio" {
+			if skipUnknownAudio && unknownAudioCodec(s) {
+				continue
+			}
 			h.audio = append(h.audio, NewHLSStream(ai, Audio, s, nil, cfg, false))
 			ai++
 		} else if s.GetCodecType() == "subtitle" && s.GetCodecName() != "hdmv_pgs_subtitle" {

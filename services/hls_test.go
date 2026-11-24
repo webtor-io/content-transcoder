@@ -120,6 +120,60 @@ func TestGetFFmpegParamsSkipsSubtitlesWithoutTextDecoder(t *testing.T) {
 	}
 }
 
+// An audio track the probe could not name has no decoder in FFmpeg, which
+// refused to open the outputs ("Decoding requested, but no decoder found
+// for: none") and failed the whole run -- 6 processes, then 503 -- though
+// the AAC track next to it plays. Measured on phone MOVs: video, AAC
+// stereo, then a 4-channel track without codec_name. The track is left out
+// of the argv and the master on both routes, and the tracks before it keep
+// their numbers.
+func TestNewHLSSkipsUnknownAudioNextToAKnownOne(t *testing.T) {
+	for _, codec := range []string{"", "none"} {
+		for _, passthrough := range []bool{false, true} {
+			unknown := testStream(2, "audio", codec)
+			unknown.Channels = 4
+			h := testHLS(testStream(0, "video", "h264"), testStream(1, "audio", "aac"), unknown)
+			if passthrough && !h.usePassthrough() {
+				t.Fatal("no passthrough")
+			}
+			h.useAudioDecoders(decl("aac51").audioDecoders())
+			params, err := h.ffmpegParamsFor("/out", ParamOptions{}, "g1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := mapTargets(params), []string{"0:0", "0:1"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("codec %q passthrough %v: -map targets = %v, want %v", codec, passthrough, got, want)
+			}
+			master := h.oldRouteMaster(ParamOptions{})
+			if passthrough {
+				master = h.passthroughMasterPlaylist("avc1.640028", 1000000)
+			}
+			if !strings.Contains(master, `URI="a0.m3u8"`) || strings.Contains(master, "a1.m3u8") {
+				t.Errorf("codec %q passthrough %v: master must offer the AAC track alone:\n%s", codec, passthrough, master)
+			}
+		}
+	}
+
+	// Before the known track: that one becomes a0, the default.
+	h := testHLS(testStream(0, "video", "h264"), testStream(1, "audio", ""), testStream(2, "audio", "aac"))
+	if got, want := mapTargets(ffmpegParams(t, h)), []string{"0:0", "0:2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("unknown first: -map targets = %v, want %v", got, want)
+	}
+
+	// Only unknown audio: kept, the source fails as before instead of
+	// playing silent.
+	h = testHLS(testStream(0, "video", "h264"), testStream(1, "audio", ""))
+	if got, want := mapTargets(ffmpegParams(t, h)), []string{"0:0", "0:1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("unknown only: -map targets = %v, want %v", got, want)
+	}
+
+	// A named codec is not unknown, whatever it is.
+	h = testHLS(testStream(0, "video", "h264"), testStream(1, "audio", "aac"), testStream(2, "audio", "flac"))
+	if got, want := mapTargets(ffmpegParams(t, h)), []string{"0:0", "0:1", "0:2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("named codec: -map targets = %v, want %v", got, want)
+	}
+}
+
 // Negative control for the allowlist: every text codec the production
 // build decodes (ffmpeg 8.1.2 -decoders) is still converted.
 func TestGetFFmpegParamsKeepsTextSubtitles(t *testing.T) {

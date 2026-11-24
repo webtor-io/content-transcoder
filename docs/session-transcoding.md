@@ -238,6 +238,21 @@ to 2 channels copied, everything else encoded to AAC stereo
 | any other > 2 ch (AAC 7.1, AAC with a PCE, E-AC-3/AC-3 without their token or on TS, DTS, TrueHD, FLAC …) | `aac51` | either | `<aacCodec> -ac 6 -b:a 384k` |
 | everything else (stereo non-AAC included) | — | — | `<aacCodec> -ac 2`, as always |
 
+- **A track the probe could not name is left out** (no `codec_name`, or
+  `none`), when another audio track has one (`NewHLS`). FFmpeg has no
+  decoder for it, refuses to open the outputs ("Decoding requested, but no
+  decoder found for: none") and the whole run dies with it, every restart
+  the same: phone MOVs with a 4-channel track after the AAC one, 45 failed
+  processes in 7 days. It is in neither the argv nor the master; a source
+  with only such audio keeps it and fails as before rather than play
+  silent. **The numbering moves**, unlike the subtitles' (Playlist
+  Request): the tracks after it are `a{N-1}`. web-ui numbers the audio
+  picker by the probe's audio streams, all of them, and uses that as the
+  hls.js index, so a picker entry of a known track that sits after an
+  unnamed one selects its neighbour, and the unnamed one's entry selects
+  the next track or nothing. In the layout seen (the unnamed track last)
+  every known track keeps its number. web-ui leaving out the same tracks
+  aligns them again.
 - **Dolby only on fMP4.** hls.js 1.6.14 (web-ui's full build) throws
   "Unsupported EC-3 in M2TS" (`tsdemuxer.ts`) and plays AC-3 in TS only in
   builds with it; the old route's audio is always TS and passthrough's always
