@@ -96,7 +96,8 @@ func TestMetrics_PlaylistWaitOutcomes(t *testing.T) {
 	runMgr := NewRunManager()
 	defer runMgr.CloseAll()
 	s := NewSession(SessionConfig{ID: "pl-metrics", HashDir: dir, RunMgr: runMgr})
-	runDir := filepath.Join(dir, "runs", "seek-0.000")
+	live := newLiveRun(dir)
+	runDir := live.OutputDir()
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,6 @@ func TestMetrics_PlaylistWaitOutcomes(t *testing.T) {
 	okHist0 := histogramCount(t, "transcoder_playlist_wait_seconds", map[string]string{"kind": "variant"})
 
 	// A run that is alive and has written nothing: the wait runs out.
-	live := newLiveRun(dir)
 	s.run = live
 	if _, err := s.WaitForPlaylist(context.Background(), "v0.m3u8", 10*time.Millisecond); err == nil {
 		t.Fatal("expected a timeout")

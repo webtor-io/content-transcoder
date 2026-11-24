@@ -1,6 +1,8 @@
 package services
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -10,6 +12,27 @@ func TestRunKey(t *testing.T) {
 	want := "/data/abc123:seek:100.500"
 	if got != want {
 		t.Errorf("runKey: got %q, want %q", got, want)
+	}
+}
+
+// Two runs of one key -- the old and the new pod of a rollout on one node,
+// or a reaped run still being cleaned up and its successor -- write to one
+// hashDir. Cleaning one up must leave the other's files where they are.
+func TestRunCleanupLeavesSameKeyRunFiles(t *testing.T) {
+	hashDir := t.TempDir()
+	key := runKey(hashDir, 0)
+	old := newTranscodeRun(key, hashDir, 0, "", nil)
+	cur := newTranscodeRun(key, hashDir, 0, "", nil)
+	if err := os.MkdirAll(cur.OutputDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	seg := filepath.Join(cur.OutputDir(), "v0-720-0.ts")
+	if err := os.WriteFile(seg, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old.Cleanup()
+	if _, err := os.Stat(seg); err != nil {
+		t.Fatalf("the other run's segment is gone after a cleanup (dirs %s, %s): %v", old.OutputDir(), cur.OutputDir(), err)
 	}
 }
 

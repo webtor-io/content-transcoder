@@ -360,7 +360,7 @@ func TestAudioVariant(t *testing.T) {
 		if c.want != "" && key != hashDir+":"+c.want+":seek:30.000" {
 			t.Errorf("%s: key %s", c.name, key)
 		}
-		dir := newTranscodeRun(key, hashDir, 30, "", h).OutputDir()
+		dir := goldenRunDir.ReplaceAllString(newTranscodeRun(key, hashDir, 30, "", h).OutputDir(), "$1")
 		wantDir := filepath.Join(hashDir, "runs", "seek-30.000")
 		if c.want != "" {
 			wantDir = filepath.Join(hashDir, "runs", c.want+"-seek-30.000")

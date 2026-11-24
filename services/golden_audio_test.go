@@ -149,6 +149,7 @@ func goldenAudioCapturePassthrough(t *testing.T) map[string]audioGoldenRecord {
 	// Session ids and the process generations in init names are random.
 	norm := func(s string) string {
 		s = goldenSessionID.ReplaceAllString(strings.ReplaceAll(s, out, "<OUT>"), "<SID>")
+		s = goldenRunDir.ReplaceAllString(s, "$1")
 		return goldenInitGen.ReplaceAllString(s, "-init-<GEN>.mp4")
 	}
 	normArgs := func(args []string) []string {

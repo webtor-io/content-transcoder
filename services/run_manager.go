@@ -60,8 +60,7 @@ func runKey(hashDir string, seekTime float64) string {
 }
 
 // runKeyFor is the key of a run of h: runKey for the old route with the
-// audio it always had, unchanged so the old and the new pod of a rollout
-// keep sharing its runs, and "<hashDir>:<variant>:seek:<t>" for any other
+// audio it always had, and "<hashDir>:<variant>:seek:<t>" for any other
 // (HLS.runVariant: passthrough, a declaration that changes an audio output,
 // or both -- "hevc", "a6c", "hevc-a6c").
 func runKeyFor(hashDir string, h *HLS, seekTime float64) string {

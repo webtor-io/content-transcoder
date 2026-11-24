@@ -58,7 +58,7 @@ Player                          Server
 
 Multiple sessions for the same source URL and seek position share a single FFmpeg process via `RunManager`:
 
-- **TranscodeRun** (`transcode_run.go`) — One FFmpeg process writing to `{hashDir}/runs/seek-{time}/`. Reference-counted; cleanup after 30s grace period when last session detaches.
+- **TranscodeRun** (`transcode_run.go`) — One FFmpeg process writing to `{hashDir}/runs/seek-{time}-{random}/` (a directory per run object: `hashDir` is shared by the pods of a node, and a cleanup must not remove another run's files). Reference-counted; cleanup after 30s grace period when last session detaches.
 - **RunManager** (`run_manager.go`) — Pool of TranscodeRuns keyed by `(hashDir, seekTime)`. `Acquire()` returns existing or creates new; `Release()` decrements refcount.
 - **Seek quantization** — Seek times are rounded to 30s boundaries so nearby seeks share a run.
 
@@ -112,14 +112,14 @@ Depends on codec mode:
       {sessionID}/
         index.m3u8                # Master playlist (static, per-session)
     runs/
-      seek-0.000/                 # Shared run at position 0
+      seek-0.000-{random}/        # Shared run at position 0 (random: each run its own dir)
         v0-720-0.ts               # Video segments
         a0-0.ts                   # Audio segments
         v0-720.m3u8.ffmpeg        # FFmpeg's raw playlist output
         ffmpeg.out, ffmpeg.err    # FFmpeg logs
-      seek-300.000/               # Shared run at position 300s
+      seek-300.000-{random}/      # Shared run at position 300s
         ...
-      a6c-seek-0.000/             # Runs of a declaration that changes the audio (hevc-seek-*: passthrough)
+      a6c-seek-0.000-{random}/    # Runs of a declaration that changes the audio (hevc-seek-*: passthrough)
 ```
 
 ## Key Configuration (env vars / CLI flags)

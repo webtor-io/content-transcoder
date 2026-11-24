@@ -28,11 +28,11 @@ func TestPlaylistForStreamKeepsEndlistOnCompletedRun(t *testing.T) {
 	defer runMgr.CloseAll()
 
 	s := NewSession(SessionConfig{ID: "completed", HashDir: dir, RunMgr: runMgr})
-	runDir := filepath.Join(dir, "runs", "seek-0.000")
+	s.run = newCompletedRun(t, dir)
+	runDir := s.run.OutputDir()
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	s.run = newCompletedRun(t, dir)
 
 	content := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-TARGETDURATION:5\n#EXTINF:4.0,\na0-0.ts\n#EXT-X-ENDLIST\n"
 	if err := os.WriteFile(filepath.Join(runDir, "a0.m3u8.ffmpeg"), []byte(content), 0644); err != nil {
@@ -61,11 +61,11 @@ func TestPlaylistForStreamStripsEndlistOnRunningRun(t *testing.T) {
 	defer runMgr.CloseAll()
 
 	s := NewSession(SessionConfig{ID: "running", HashDir: dir, RunMgr: runMgr})
-	runDir := filepath.Join(dir, "runs", "seek-0.000")
+	run := newTranscodeRun("test:seek:0.000", dir, 0, "", nil)
+	runDir := run.OutputDir()
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	run := newTranscodeRun("test:seek:0.000", dir, 0, "", nil)
 	run.AddRef()
 	s.run = run
 

@@ -351,10 +351,9 @@ to 2 channels copied, everything else encoded to AAC stereo
 - **Run variant.** A declaration that changes an audio output gets runs of
   its own: `HLS.runVariant` joins `hevc` (passthrough) and the audio variant,
   `a` and one code per audio output (`c` copy, `2`/`6` the encode's
-  channels): key `{hashDir}:a6c:seek:{t}`, directory `a6c-seek-{t}`,
-  `hevc-accc6666-seek-{t}`. Without a change the part is empty and the key,
-  directory and argv are the old ones, so old and new pods of a rollout keep
-  sharing those runs. Declarations that give the same arguments share runs
+  channels): key `{hashDir}:a6c:seek:{t}`, directory `a6c-seek-{t}-{random}`,
+  `hevc-accc6666-seek-{t}-{random}`. Without a change the part is empty and
+  the key, directory name and argv are the old ones. Declarations that give the same arguments share runs
   (`ac3` on a TS session changes nothing). The remembered real start and
   FFmpeg options are per key too (`fallbackKey`): a variant learns its own
   fallbacks, at the price of one failed start of its own.
@@ -607,11 +606,13 @@ for this are capped at 4096, each cut to 64 bytes.
 
 ## Shared Runs (TranscodeRun)
 
-A `TranscodeRun` is one FFmpeg process writing segments to `{hashDir}/runs/seek-{time}/` (a passthrough run: `{hashDir}/runs/hevc-seek-{time}/`). It is reference-counted — multiple sessions can share it.
+A `TranscodeRun` is one FFmpeg process writing segments to `{hashDir}/runs/seek-{time}-{random}/` (a passthrough run: `{hashDir}/runs/hevc-seek-{time}-{random}/`). It is reference-counted — multiple sessions can share it.
+
+**Each run object has a directory of its own** (the random part, made once in `newTranscodeRun`). `hashDir` is on the node's hostPath, shared by every transcoder pod of the node, and a run's cleanup removes its directory whole. Named by key alone, the directory was also the one of the same key's run on the other pod of a rollout, and of the run created here while a reaped one of the key was still being cleaned up (the reaper deletes the run from the map, then stops FFmpeg for up to 2 s, then removes the directory): the cleanup deleted the segments the other run was serving, and its viewers got 504s (2026-11-23: 28 in one session through a rollout). Sessions never shared a run across pods (a session lives on one pod), only the directory, so nothing is lost by it. A directory left by a pod that died without its shutdown (SIGKILL, OOM) is no longer reused by the next run of its key; it goes with the `hashDir` when the external cleaner drops it.
 
 ### Run Identity
 
-Runs are keyed by `(hashDir, seekTime)`: `{hashDir}:seek:{t}`. Two sessions with the same source URL and same quantized seek time share the same run. A passthrough run is keyed `{hashDir}:hevc:seek:{t}` (`runKeyFor`): a passthrough and an old-route session of the same source never share a run, a directory, a remembered real start (`ResolvedStart`) or remembered FFmpeg options (`fallbackKey`). A session whose declaration changes an audio output has the audio variant in its key (`{hashDir}:a6c:seek:{t}`, `{hashDir}:hevc-accc6666:seek:{t}`; see [Audio](#audio-multichannel-aac-and-dolby)). The old route's key, directory and options are the ones it always had, so the old and new pods of a rollout keep sharing its runs.
+Runs are keyed by `(hashDir, seekTime)`: `{hashDir}:seek:{t}`. Two sessions with the same source URL and same quantized seek time share the same run. A passthrough run is keyed `{hashDir}:hevc:seek:{t}` (`runKeyFor`): a passthrough and an old-route session of the same source never share a run, a directory, a remembered real start (`ResolvedStart`) or remembered FFmpeg options (`fallbackKey`). A session whose declaration changes an audio output has the audio variant in its key (`{hashDir}:a6c:seek:{t}`, `{hashDir}:hevc-accc6666:seek:{t}`; see [Audio](#audio-multichannel-aac-and-dolby)). The old route's key, directory name and options are the ones it always had.
 
 ### Seek Quantization
 
@@ -831,17 +832,17 @@ The player tracks `seekOffset` — the quantized seek position. Displayed time =
       {sessionID}/
         index.m3u8                 # Master playlist (per-session, static)
     runs/
-      seek-0.000/                  # Shared run: transcoding from 0s
+      seek-0.000-{random}/         # Shared run: transcoding from 0s (the random part: each run its own)
         v0-720-0.ts, v0-720-1.ts  # Video segments
         a0-0.ts, a0-1.ts          # Audio segments
         v0-720.m3u8.ffmpeg         # FFmpeg's raw playlist
         a0.m3u8.ffmpeg
         ffmpeg.out, ffmpeg.err     # FFmpeg logs
-      seek-480.000/                # Shared run: transcoding from 480s
+      seek-480.000-{random}/       # Shared run: transcoding from 480s
         ...
-      a6c-seek-0.000/              # A declaration that changes the audio: its own runs
+      a6c-seek-0.000-{random}/     # A declaration that changes the audio: its own runs
         ...
-      hevc-seek-0.000/             # Passthrough run from 0s
+      hevc-seek-0.000-{random}/    # Passthrough run from 0s
         v0-2160-init-{gen}.mp4     # Video init of process {gen} (one per process)
         v0-2160-0.m4s              # Video segments (cut at keyframes)
         a0-init-{gen}.mp4, a0-0.m4s  # Audio, fMP4 too
