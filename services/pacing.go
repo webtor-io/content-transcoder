@@ -17,8 +17,17 @@ import (
 // on the pod could use. FFmpeg has no feedback input, so the run freezes it
 // (SIGSTOP) once it is paceLead ahead of the furthest segment any viewer has
 // asked for, and lets it go (SIGCONT) when a viewer gets within paceResume.
-// Its source connection just idles meanwhile: neither torrent-http-proxy
-// nor the seeder sets read/write timeouts, and -reconnect covers a drop.
+//
+// A frozen run's input is not held open for it forever. It reads through
+// torrent-http-proxy from the seeder, whose stall guard
+// (STREAM_STALL_TIMEOUT, 10 min, checked every 30 s) counts the time its
+// handler is blocked writing to a reader that stopped. Once the buffers
+// between them fill, a run frozen for about 10 min has its stream cut; the
+// cut shows on resume and is picked up with a Range request
+// (torrent-http-proxy's body retry, else FFmpeg's -reconnect). The cut also
+// releases the seeder's hold on the torrent, which drops it 600 s later if
+// nothing else reads it: a resume after ~20 min has the seeder load the
+// torrent and connect to its peers again.
 //
 // The first paceLead of every run is produced at full speed, so start-up
 // (web-ui buffers 30 s before showing the player) is untouched.
@@ -32,7 +41,11 @@ var (
 	// paceResumeStall is how long a released run may go without starting a
 	// new primary segment before the resume counts as stalled. A copy or
 	// re-encode run with a live source starts one within a few seconds; on
-	// 2026-09-25 a resumed run started none for 15 min.
+	// 2026-09-25 a resumed run started none for 15 min. The three stalls
+	// captured on 2026-11-24/25 were source starvation, not the pause: the
+	// seeder had no data for the piece at the byte FFmpeg resumed at. An
+	// unpaced run would wait on the same piece, so turning pacing off does
+	// not remove the stall a viewer sees.
 	paceResumeStall = 30 * time.Second
 )
 
