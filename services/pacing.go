@@ -18,16 +18,20 @@ import (
 // (SIGSTOP) once it is paceLead ahead of the furthest segment any viewer has
 // asked for, and lets it go (SIGCONT) when a viewer gets within paceResume.
 //
-// A frozen run's input is not held open for it forever. It reads through
-// torrent-http-proxy from the seeder, whose stall guard
+// A frozen run's input is not held open for it forever when the seeder
+// serves the file itself (from the torrent or its file cache). It reads
+// through torrent-http-proxy from the seeder, whose stall guard
 // (STREAM_STALL_TIMEOUT, 10 min, checked every 30 s) counts the time its
 // handler is blocked writing to a reader that stopped. Once the buffers
 // between them fill, a run frozen for about 10 min has its stream cut; the
 // cut shows on resume and is picked up with a Range request
-// (torrent-http-proxy's body retry, else FFmpeg's -reconnect). The cut also
-// releases the seeder's hold on the torrent, which drops it 600 s later if
-// nothing else reads it: a resume after ~20 min has the seeder load the
-// torrent and connect to its peers again.
+// (torrent-http-proxy's body retry, else FFmpeg's -reconnect). On the
+// torrent path the cut also releases the seeder's hold on the torrent,
+// which drops it 600 s later if nothing else reads it: a resume after
+// ~20 min has the seeder load the torrent and connect to its peers again.
+// A file Vault has never streams from the seeder: the seeder redirects to
+// Vault's copy and torrent-http-proxy follows, so this guard does not
+// apply and what cuts an idle stream is up to the storage endpoint.
 //
 // The first paceLead of every run is produced at full speed, so start-up
 // (web-ui buffers 30 s before showing the player) is untouched.
